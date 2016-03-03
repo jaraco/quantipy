@@ -274,24 +274,38 @@ class QuantipyViews(ViewMapper):
                 else:
                     raw = True if name in ['counts_sum', 'c%_sum'] else False
                     q.count(axis=axis, raw_sum=raw, as_df=False, margin=False)
-                if rel_to is not None:
-                    if q.type == 'array':
-                        rel_to = 'y'
-                    q.normalize(rel_to)
-                q.to_df()
-                view.cbases = q.cbase
-                view.rbases = q.rbase
-                if calc is not None:
-                    calc_only = kwargs.get('calc_only', False)
-                    q.calc(calc, axis, result_only=calc_only)
-                if calc is not None or name in ['counts_sum', 'c%_sum']:
-                    method_nota = 'f.c:f'
-                else:
-                    method_nota = 'f'
-                notation = view.notation(method_nota, condition)
-                view._notation = notation
-                view.dataframe = q.result.T if q.type == 'array' else q.result
-                link[notation] = view
+
+                views = []
+                for rel in rel_to:
+                    new_view = copy.deepcopy(view)
+                    new_q = copy.deepcopy(q)
+                    new_view._kwargs['rel_to'] = rel
+                    views.append((new_view, new_q))
+                old_rel_to = kwargs['rel_to']
+                for v, qs in views:
+                    rel_to = v._kwargs['rel_to']
+                    if rel_to is not None:
+                        if qs.type == 'array':
+                            rel_to = 'y'
+                        qs.normalize(rel_to)
+                    qs.to_df()
+                    v.cbases = qs.cbase
+                    v.rbases = qs.rbase
+                    if calc is not None:
+                        calc_only = kwargs.get('calc_only', False)
+                        qs.calc(calc, axis, result_only=calc_only)
+                    if calc is not None or name in ['counts_sum', 'c%_sum']:
+                        method_nota = 'f.c:f'
+                    else:
+                        method_nota = 'f'
+                    notation = v.notation(method_nota, condition)
+                    notation = notation.replace(str(old_rel_to), str(rel_to) if rel_to is not None else '')
+                    v._notation = notation
+                    v.dataframe = qs.result.T if qs.type == 'array' else qs.result
+                    link[notation] = v
+
+    def _pct(self):
+        pass
 
     def descriptives(self, link, name, kwargs):
         """
