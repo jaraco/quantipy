@@ -274,29 +274,27 @@ class QuantipyViews(ViewMapper):
                 else:
                     raw = True if name in ['counts_sum', 'c%_sum'] else False
                     q.count(axis=axis, raw_sum=raw, as_df=False, margin=False)
-                old_rel_to = kwargs['rel_to']
-                for rel in old_rel_to:
+                for rel in kwargs['rel_to']:
                     v = View(link, name, kwargs)
                     v._kwargs['rel_to'] = rel
-                    q = q._copy()
+                    q_ = q._copy()
                     if rel is not None:
-                        if q.type == 'array':
+                        if q_.type == 'array':
                             rel = 'y'
-                        q.normalize(rel)
-                    q.to_df()
-                    v.cbases = q.cbase
-                    v.rbases = q.rbase
+                        q_.normalize(rel)
+                    q_.to_df()
+                    v.cbases = q_.cbase
+                    v.rbases = q_.rbase
                     if calc is not None:
                         calc_only = kwargs.get('calc_only', False)
-                        q.calc(calc, axis, result_only=calc_only)
+                        q_.calc(calc, axis, result_only=calc_only)
                     if calc is not None or name in ['counts_sum', 'c%_sum']:
                         method_nota = 'f.c:f'
                     else:
                         method_nota = 'f'
                     notation = v.notation(method_nota, condition)
-                    notation = notation.replace(str(old_rel_to), str(rel) if rel is not None else '')
                     v._notation = notation
-                    v.dataframe = q.result.T if q.type == 'array' else q.result
+                    v.dataframe = q_.result.T if q_.type == 'array' else q_.result
                     link[notation] = v
 
     def _pct(self):
