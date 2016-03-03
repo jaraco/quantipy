@@ -277,8 +277,8 @@ class QuantipyViews(ViewMapper):
 
                 views = []
                 for rel in rel_to:
-                    new_view = copy.deepcopy(view)
-                    new_q = copy.deepcopy(q)
+                    new_view = copy.copy(view)
+                    new_q = copy.copy(q)
                     new_view._kwargs['rel_to'] = rel
                     views.append((new_view, new_q))
                 old_rel_to = kwargs['rel_to']
