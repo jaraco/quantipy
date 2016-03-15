@@ -62,7 +62,7 @@ class DataSet(object):
         self._set_file_info(path_data)
 
     def _set_file_info(self, path_data, path_meta=None):
-        self.path = '/'.join(path_data.split('/')[:-1])
+        self.path = '/'.join(path_data.split('/')[:-1]) + '/'
         if path_meta:
             self._tk = self._meta['lib']['default text']
         else:
@@ -384,7 +384,7 @@ class DataSet(object):
         """
         Create a Link instance from the DataSet.
         """
-        raise NotImplementedError('Links from DataSet currently not supported!')
+        #raise NotImplementedError('Links from DataSet currently not supported!')
         if filters is None: filters = 'no_filter'
-        l = Link(self, filters, x, y)
+        l = qp.sandbox.Link(self, filters, x, y)
         return l

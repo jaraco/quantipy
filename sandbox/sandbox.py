@@ -2258,16 +2258,175 @@ class StatAlgos(object):
     def __init__(self):
         pass
 
-    def test(self, x, y=None):
-        print self.ds[x]
+    def select_variables(self, x, y=None):
+        if self.ds._is_array(x):
+            x = self.ds._get_itemmap(x, non_mapped='items')
+        elif not isinstance(x, list):
+            x = [x]
+        if y is not None and not y == '@':
+            if self.ds._is_array(y):
+                y = self.ds._get_itemmap(y, non_mapped='items')
+            elif not isinstance(y, list):
+                y = [y]
+        elif y == '@':
+            y = x
+        if x == y or y is None:
+            data_slice = x
+        else:
+            data_slice = x + y
+        self.x = x
+        self.y = y
+        self._analysisdata = self.ds[data_slice]
+
+
+    def _has_analysis_data(self):
+        if not hasattr(self, '_analysisdata'):
+            raise AttributeError('No analysis variables assigned!')
+
+    def _has_yvar(self):
+        if self.y is None:
+            raise AttributeError('Must select at least one y-variable or '
+                                 'matrix indicator!')
+
+    def _get_quantities(self, weight=None, create='all'):
+        crossed_quantities = []
+        single_quantities = []
+        helper_stack = qp.Stack()
+        helper_stack.add_data(self.ds.name, self.ds._data, self.ds._meta)
+        for x, y in product(self.x, self.y):
+            helper_stack.add_link(x=x, y=y)
+        for var in self.x + self.y:
+            helper_stack.add_link(x=var, y='@')
+        for x, y, in product(self.x, self.y):
+            l = helper_stack[self.ds.name]['no_filter'][x][y]
+            crossed_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
+        for var in self.x + self.y:
+            l = helper_stack[self.ds.name]['no_filter'][var]['@']
+            single_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
+        return single_quantities, crossed_quantities
+
+
+
+
 
 class Association(StatAlgos):
+    """
+    STAT DESCP
+    """
     def __init__(self, dataset):
         self.ds = dataset
+        self.single_quantities = None
+        self.crossed_quantities = None
+
+    def _has_matrix_structure(self):
+        return self.x == self.y
+
+    def _make_index_pairs(self):
+        full_range = len(self.x + self.y) - 1
+        x_range = range(0, len(self.x))
+        y_range = range(x_range[-1] + 1, full_range + 1)
+        if self._has_matrix_structure():
+            return list(product(range(0, full_range), repeat=2))
+        else:
+            return list(product(x_range, y_range))
+
+    def corr(self, weight=None, n=True):
+        self._has_analysis_data()
+        self._has_yvar()
+        cov, n = self.cov(weight)
+        pairs = self._make_index_pairs()
+        stddev = [q.summarize('stddev', margin=False, as_df=False).result[0, 0]
+                  for q in self.single_quantities]
+        normalizer = [stddev[ix1] * stddev[ix2] for ix1, ix2 in pairs]
+        corrs = cov / normalizer
+        corr_df = pd.DataFrame(corrs)
+        corr_df.index = self.x
+        corr_df.columns = self.y
+
+        colors = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
+        corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
+                               square=True, robust=True, cmap=colors,
+                               center=np.mean(corr_df.values), linewidth=0.5)
+        fig = corr_res.get_figure()
+        fig.suptitle('Correlation matrix\n(Pearson)')
+        fig.savefig(self.ds.path + 'corr.png')
+        # plt.show()
+
+    def cov(self, weight=None):
+        if weight is None:
+            w = '@1'
+        else:
+            w = weight
+        if self.single_quantities is None:
+            self.single_quantities, _ = self._get_quantities(weight)
+        means = [q.summarize('mean', margin=False, as_df=False).result[0, 0]
+                 for q in self.single_quantities]
+        data = self._analysisdata.copy()
+        data = pd.concat([data, self.ds[[w]]], axis=1)
+        mean_diff_data = data - (means + [0.0])
+        pairs = self._make_index_pairs()
+        unbiased_n = [np.nansum(
+                        data.ix[:, [ix1, ix2, -1]].dropna().ix[:, -1]) - 1
+                      for ix1, ix2 in pairs]
+        xprod = [np.nansum(
+                    (mean_diff_data.ix[:, -1] *
+                     mean_diff_data.ix[:, ix1] *
+                     mean_diff_data.ix[:, ix2]))
+                 for ix1, ix2 in pairs]
+        cov = np.array(xprod) / unbiased_n
+        paired_n = [n + 1 for n in unbiased_n]
+        return cov, paired_n
 
 
 
+    def _cov(self, x, y, w=None, n=False, as_df=True):
+            """
+            Compute the sample covariance (matrix).
+            """
+            self._prepare_analysis('covariance', x, y, w)
+            full_matrix = self._show_full_matrix()
+            pairs = self._make_index_pairs()
+            d = self.analysis_data
+            means = [q.summarize('mean', margin=False, as_df=False).result[0, 0]
+                     for q in self.frequencies]
+            m_d = d - (means + [0.0])
+            unbiased_n = [np.nansum(d.ix[:, [ix1, ix2, -1]].dropna().ix[:, -1]) - 1
+                          for ix1, ix2 in pairs]
+            xprod = [np.nansum(m_d.ix[:, -1] *  m_d.ix[:, ix1] * m_d.ix[:, ix2])
+                     for ix1, ix2 in pairs]
+            cov = np.array(xprod) / unbiased_n
+            if n:
+                paired_n = [n + 1 for n in unbiased_n]
+            if as_df:
+                cov_result = self._format_result_df(self._format_output_pairs(cov))
+            else:
+                cov_result = self._format_output_pairs(cov)
+            if n:
+                return paired_n, cov_result
+            else:
+                return cov_result
 
+
+
+    # def corr(self, x, y, w=None, scatter=True, sigs=False, n=False, as_df=False):
+        # self._prepare_analysis('correlation', x, y, w=w)
+        # full_matrix = self._show_full_matrix()
+        # pairs = self._make_index_pairs()
+        # cov = self.cov(x=x, y=y, w=w, n=n, as_df=False)
+        # if n:
+        #     ns, cov = cov[0], cov[1].flatten()
+        # else:
+        #     cov = cov.flatten()
+        # stddev = [q.summarize('stddev', margin=False, as_df=False).result[0, 0]
+        #           for q in self.frequencies]
+        # normalizer = [stddev[ix1] * stddev[ix2] for ix1, ix2 in pairs]
+        # corrs = cov / normalizer
+        # corr_df = self._format_result_df(self._format_output_pairs(corrs))
+
+        # colors = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
+        # corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
+        #                        square=True, robust=True, cmap=colors,
+        #                        center=np.mean(corr_df.values), linewidth=0.5)
 
 # class Multivariate(object):
 #     """
