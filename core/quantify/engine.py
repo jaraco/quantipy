@@ -404,19 +404,35 @@ class Quantity(object):
                 else:
                     return missingfied
 
-    def _organize_missings(self, missings):
+    def _organize_global_missings(self, missings):
         hidden = [c for c in missings.keys() if missings[c] == 'hidden']
         excluded = [c for c in missings.keys()
-                    if missings[c] in ['excluded', 'f.excluded']]
+                    if missings[c] == 'excluded']
         shown = [c for c in missings.keys() if missings[c] == 'shown']
         return hidden, excluded, shown
 
-    def _clean_from_missings(self):
+    def _organize_stats_missings(self, missings):
+        excluded = [c for c in missings.keys()
+                    if missings[c] in ['d.excluded', 'excluded']]
+        return excluded
+
+    def _autodrop_stats_missings(self):
         if self.x == '@':
             pass
         elif self.ds._has_missings(self.x):
             missings = self.ds._get_missings(self.x)
-            hidden, excluded, shown = self._organize_missings(missings)
+            to_drop = self._organize_stats_missings(missings)
+            self.exclude(to_drop)
+        else:
+            pass
+        return None
+
+    def _clean_from_global_missings(self):
+        if self.x == '@':
+            pass
+        elif self.ds._has_missings(self.x):
+            missings = self.ds._get_missings(self.x)
+            hidden, excluded, shown = self._organize_global_missings(missings)
             if excluded:
                 excluded_codes = excluded
                 excluded_idxer = self._missingfy(excluded, keep_base=False,
@@ -958,6 +974,7 @@ class Quantity(object):
         if self.is_empty:
             self.result = self._empty_result()
         else:
+            self._autodrop_stats_missings()
             if stat == 'summary':
                 stddev, mean, base = self._dispersion(axis, measure='sd',
                                                       _return_mean=True,
@@ -1320,7 +1337,7 @@ class Quantity(object):
         self.matrix = self.matrix[self._dataidx]
         self.matrix = self._clean()
         self._squeeze_dummies()
-        self._clean_from_missings()
+        self._clean_from_global_missings()
         return self.matrix
 
     def _dummyfy(self, section=None):
