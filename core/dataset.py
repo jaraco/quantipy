@@ -1,0 +1,349 @@
+import numpy as np
+import pandas as pd
+import quantipy as qp
+from quantipy.core.helpers.functions import emulate_meta
+from quantipy.core.tools.view.logic import (
+    has_any, has_all, has_count,
+    not_any, not_all, not_count,
+    is_lt, is_ne, is_gt,
+    is_le, is_eq, is_ge,
+    union, intersection, get_logic_index)
+from cache import Cache
+
+class DataSet(object):
+    """
+    A set of casedata (required) and meta data (optional).
+
+    DESC.
+    """
+    def __init__(self, name):
+        self.path = None
+        self.name = name
+        self.filtered = 'no_filter'
+        self._data = None
+        self._meta = None
+        self._tk = None
+        self._cache = Cache()
+
+    # ------------------------------------------------------------------------
+    # ITEM ACCESS / OVERRIDING
+    # ------------------------------------------------------------------------
+    def __getitem__(self, var):
+        if isinstance(var, (unicode, str)):
+            if not self._is_array(var):
+                return self._data[var]
+            else:
+                items = self._get_itemmap(var, non_mapped='items')
+                return self._data[items]
+        else:
+            return self._data[var]
+
+    # ------------------------------------------------------------------------
+    # I/O
+    # ------------------------------------------------------------------------
+    def read(self, path_data, path_meta):
+        self._data = qp.dp.io.load_csv(path_data+'.csv')
+        self._meta = qp.dp.io.load_json(path_meta+'.json')
+        self.path = '/'.join(path_data.split('/')[:-1])
+        self._tk = self._meta['lib']['default text']
+        self._data['@1'] = np.ones(len(self._data))
+        self._data.index = list(xrange(0, len(self._data.index)))
+
+    def data(self):
+        return self._data
+
+    def meta(self):
+        return self._meta
+
+    def cache(self):
+        return self._cache
+
+    # ------------------------------------------------------------------------
+    # META INSPECTION/MANIPULATION/HANDLING
+    # ------------------------------------------------------------------------
+    def set_missings(self, var, missing_map=None):
+        if missing_map is None:
+            missing_map = {}
+        if any(isinstance(k, tuple) for k in missing_map.keys()):
+            flat_missing_map = {}
+            for miss_code, miss_type in missing_map.items():
+                if isinstance(miss_code, tuple):
+                    for code in miss_code:
+                        flat_missing_map[code] = miss_type
+                else:
+                    flat_missing_map[miss_code] = miss_type
+            missing_map = flat_missing_map
+        if self._is_array(var):
+            var = self._get_itemmap(var, non_mapped='items')
+        else:
+            if not isinstance(var, list): var = [var]
+        for v in var:
+            if self._has_missings(v):
+                self.meta()['columns'][v].update({'missings': missing_map})
+            else:
+                self.meta()['columns'][v]['missings'] = missing_map
+
+    def _get_missings(self, var):
+        if self._is_array(var):
+            var = self._get_itemmap(var, non_mapped='items')
+        else:
+            if not isinstance(var, list): var = [var]
+        for v in var:
+            if self._has_missings(v):
+                return self.meta()['columns'][v]['missings']
+            else:
+                return None
+
+    def describe(self, var=None, restrict_to=None, text_key=None):
+        """
+        Inspect the DataSet's global or variable level structure.
+        """
+        if text_key is None: text_key = self._tk
+        if var is not None:
+            return self._get_meta(var, restrict_to, text_key)
+        if self._meta['columns'] is None:
+            return 'No meta attached to data_key: %s' %(data_key)
+        else:
+            types = {
+                'int': [],
+                'float': [],
+                'single': [],
+                'delimited set': [],
+                'string': [],
+                'date': [],
+                'time': [],
+                'array': [],
+                'N/A': []
+            }
+            not_found = []
+            for col in self._data.columns:
+                if not col in ['@1', 'id_L1', 'id_L1.1']:
+                    try:
+                        types[
+                              self._meta['columns'][col]['type']
+                             ].append(col)
+                    except:
+                        types['N/A'].append(col)
+            for mask in self._meta['masks'].keys():
+                types[self._meta['masks'][mask]['type']].append(mask)
+            idx_len = max([len(t) for t in types.values()])
+            for t in types.keys():
+                typ_padded = types[t] + [''] * (idx_len - len(types[t]))
+                types[t] = typ_padded
+            types = pd.DataFrame(types)
+            types.columns.name = 'size: {}'.format(len(self._data))
+            if restrict_to:
+                types = pd.DataFrame(types[restrict_to]).replace('', np.NaN)
+                types = types.dropna()
+                types.columns.name = 'count: {}'.format(len(types))
+            return types
+
+    def _get_type(self, var):
+        if var in self._meta['masks'].keys():
+            return self._meta['masks'][var]['type']
+        else:
+             return self._meta['columns'][var]['type']
+
+    def _has_missings(self, var):
+        return 'missings' in self.meta()['columns'][var].keys()
+
+    def _is_numeric(self, var):
+        return self._get_type(var) in ['float', 'int']
+
+    def _is_array(self, var):
+        return self._get_type(var) == 'array'
+
+    def _is_multicode_array(self, mask_element):
+        return self[mask_element].dtype == 'object'
+
+    def _get_label(self, var, text_key=None):
+        if text_key is None: text_key = self._tk
+        if self._get_type(var) == 'array':
+            return self._meta['masks'][var]['text'][text_key]
+        else:
+            return self._meta['columns'][var]['text'][text_key]
+
+    def _get_valuemap(self, var, text_key=None, non_mapped=None):
+        if text_key is None: text_key = self._tk
+        if self._get_type(var) == 'array':
+            vals = self._meta['lib']['values'][var]
+        else:
+            vals = emulate_meta(self._meta,
+                                self._meta['columns'][var].get('values', None))
+        if non_mapped in ['codes', 'lists', None]:
+            codes = [v['value'] for v in vals]
+            if non_mapped == 'codes':
+                return codes
+        if non_mapped in ['texts', 'lists', None]:
+            texts = [v['text'][text_key] for v in vals]
+            if non_mapped == 'texts':
+                return texts
+        if non_mapped == 'lists':
+            return codes, texts
+        else:
+            return zip(codes, texts)
+
+    def _get_itemmap(self, var, text_key=None, non_mapped=None):
+        if text_key is None: text_key = self._tk
+        if non_mapped in ['items', 'lists', None]:
+            items = [i['source'].split('@')[-1]
+                     for i in self._meta['masks'][var]['items']]
+            if non_mapped == 'items':
+                return items
+        if non_mapped in ['texts', 'lists', None]:
+            items_texts = [self._meta['columns'][i]['text'][text_key]
+                           for i in items]
+            if non_mapped == 'texts':
+                return items_texts
+        if non_mapped == 'lists':
+            return items, items_texts
+        else:
+            return zip(items, items_texts)
+
+    def _get_meta(self, var, restrict_to=None,  text_key=None):
+        if text_key is None: text_key = self._tk
+        var_type = self._get_type(var)
+        label = self._get_label(var, text_key)
+        missings = self._get_missings(var)
+        if not self._is_numeric(var):
+            codes, texts = self._get_valuemap(var, non_mapped='lists')
+            if missings:
+                missings = [None if code not in missings else missings[code]
+                            for code in codes]
+            else:
+                missings = [None] * len(codes)
+            if var_type == 'array':
+                items, items_texts = self._get_itemmap(var, non_mapped='lists')
+                idx_len = max((len(codes), len(items)))
+                if len(codes) > len(items):
+                    pad = (len(codes) - len(items))
+                    items = self._pad_meta_list(items, pad)
+                    items_texts = self._pad_meta_list(items_texts, pad)
+                elif len(codes) < len(items):
+                    pad = (len(items) - len(codes))
+                    codes = self._pad_meta_list(codes, pad)
+                    texts = self._pad_meta_list(texts, pad)
+                    missings = self._pad_meta_list(missings, pad)
+                elements = [items, items_texts, codes, texts, missings]
+                columns = ['items', 'item texts', 'codes', 'texts', 'missing type']
+            else:
+                idx_len = len(codes)
+                elements = [codes, texts, missings]
+                columns = ['codes', 'texts', 'missing type']
+            meta_s = [pd.Series(element, index=range(0, idx_len))
+                      for element in elements]
+            meta_df = pd.concat(meta_s, axis=1)
+            meta_df.columns = columns
+            meta_df.index.name = var_type
+            meta_df.columns.name = '{}: {}'.format(var, label)
+        else:
+            meta_df = pd.DataFrame(['N/A'])
+            meta_df.index = [var_type]
+            meta_df.columns = ['{}: {}'.format(var, label)]
+        return meta_df
+
+    @staticmethod
+    def _pad_meta_list(meta_list, pad_to_len):
+        return meta_list + ([''] * pad_to_len)
+
+    # ------------------------------------------------------------------------
+    # DATA MANIPULATION/HANDLING
+    # ------------------------------------------------------------------------
+    def make_dummy(self, var):
+        if not self._is_array(var):
+            if self[var].dtype == 'object': # delimited set-type data
+                dummy_data = self[var].str.get_dummies(';')
+                if self.meta is not None:
+                    var_codes = self._get_valuemap(var, non_mapped='codes')
+                    dummy_data.columns = [int(col) for col in dummy_data.columns]
+                    dummy_data = dummy_data.reindex(columns=var_codes)
+                    dummy_data.replace(np.NaN, 0, inplace=True)
+                if self.meta:
+                    dummy_data.sort_index(axis=1, inplace=True)
+            else: # single, int, float data
+                dummy_data = pd.get_dummies(self[var])
+                if self.meta and not self._is_numeric(var):
+                    var_codes = self._get_valuemap(var, non_mapped='codes')
+                    dummy_data = dummy_data.reindex(columns=var_codes)
+                    dummy_data.replace(np.NaN, 0, inplace=True)
+                dummy_data.rename(
+                    columns={
+                        col: int(col)
+                        if float(col).is_integer()
+                        else col
+                        for col in dummy_data.columns
+                    },
+                    inplace=True)
+        else: # array-type data
+            items = self._get_itemmap(var, non_mapped='items')
+            codes = self._get_valuemap(var, non_mapped='codes')
+            dummy_data = []
+            if self._is_multicode_array(items[0]):
+                for i in items:
+                    i_dummy = self[i].str.get_dummies(';')
+                    i_dummy.columns = [int(col) for col in i_dummy.columns]
+                    dummy_data.append(i_dummy.reindex(columns=codes))
+            else:
+                for i in items:
+                    dummy_data.append(
+                        pd.get_dummies(self[i]).reindex(columns=codes))
+            dummy_data = pd.concat(dummy_data, axis=1)
+            cols = ['{}_{}'.format(i, c) for i in items for c in codes]
+            dummy_data.columns = cols
+        return dummy_data
+
+    def code_count(self, var, ignore=None, total=None):
+        data = self.make_dummy(var)
+        is_array = self._is_array(var)
+        if ignore:
+            if ignore == 'meta': ignore = self._get_missings(var).keys()
+            if is_array:
+                ignore = [col for col in data.columns for i in ignore
+                          if col.endswith(str(i))]
+            slicer = [code for code in data.columns if code not in ignore]
+            data = data[slicer]
+        if total:
+            return data.sum().sum()
+        else:
+            if is_array:
+                items = self._get_itemmap(var, non_mapped='items')
+                data = pd.concat([data[[col for col in data.columns
+                                        if col.startswith(item)]].sum(axis=1)
+                                  for item in items], axis=1)
+                data.columns = items
+            else:
+                data = pd.DataFrame(data.sum(axis=0))
+                data.columns = [var]
+            return data
+
+    def filter(self, alias, condition, inplace=False):
+        """
+        Filter the DataSet using a Quantipy logical expression.
+        """
+        if not inplace:
+            data = self._data.copy()
+        else:
+            data = self._data
+        filter_idx = get_logic_index(pd.Series(data.index), condition, data)
+        filtered_data = data.iloc[filter_idx[0], :]
+        if inplace:
+            self.filtered = alias
+            self._data = filtered_data
+        else:
+            new_ds = DataSet(self.name)
+            new_ds._data = filtered_data
+            new_ds._meta = self._meta
+            new_ds.filtered = alias
+            return new_ds
+
+    # ------------------------------------------------------------------------
+    # LINK OBJECT CONVERSION & HANDLERS
+    # ------------------------------------------------------------------------
+    def link(self, filters=None, x=None, y=None, views=None):
+        """
+        Create a Link instance from the DataSet.
+        """
+        raise NotImplementedError('Links from DataSet currently not supported!')
+        if filters is None: filters = 'no_filter'
+        l = Link(self, filters, x, y)
+        return l

@@ -1,3 +1,4 @@
+from quantipy.core.dataset import DataSet
 from quantipy.core.link import Link
 from quantipy.core.view import View
 from quantipy.core.chain import Chain
