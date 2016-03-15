@@ -184,6 +184,8 @@ class DataSet(object):
              return self._meta['columns'][var]['type']
 
     def _has_missings(self, var):
+        if self._get_type(var) == 'array':
+            var = self._get_itemmap(var, non_mapped='items')[0]
         return 'missings' in self.meta()['columns'][var].keys()
 
     def _is_numeric(self, var):
