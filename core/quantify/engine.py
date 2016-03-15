@@ -406,8 +406,7 @@ class Quantity(object):
 
     def _organize_global_missings(self, missings):
         hidden = [c for c in missings.keys() if missings[c] == 'hidden']
-        excluded = [c for c in missings.keys()
-                    if missings[c] == 'excluded']
+        excluded = [c for c in missings.keys() if missings[c] == 'excluded']
         shown = [c for c in missings.keys() if missings[c] == 'shown']
         return hidden, excluded, shown
 

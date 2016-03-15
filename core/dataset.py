@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import quantipy as qp
-
 from quantipy.core.tools.dp.io import (
     read_quantipy as r_quantipy,
     read_dimensions as r_dimensions,
@@ -10,7 +9,6 @@ from quantipy.core.tools.dp.io import (
     read_ascribe as r_ascribe,
     write_spss as w_spss,
     write_quantipy as w_quantipy)
-
 from quantipy.core.helpers.functions import emulate_meta
 from quantipy.core.tools.view.logic import (
     has_any, has_all, has_count,
@@ -19,8 +17,6 @@ from quantipy.core.tools.view.logic import (
     is_le, is_eq, is_ge,
     union, intersection, get_logic_index)
 from cache import Cache
-
-
 
 class DataSet(object):
     """

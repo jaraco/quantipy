@@ -11,6 +11,7 @@ from quantipy.core.view_generators.view_maps import QuantipyViews
 import quantipy.core.helpers.functions as helpers
 import quantipy.core.tools.dp as dp
 import quantipy.core.tools.view as v
+from quantipy.sandbox import sandbox
 
 from quantipy.core.quantify.engine import Quantity, Test
 

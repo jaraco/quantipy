@@ -2,8 +2,6 @@ import numpy as np
 import pandas as pd
 import quantipy as qp
 
-import quantipy.sandbox
-
 from quantipy.core.view import View
 from quantipy.core.view_generators.view_mapper import ViewMapper
 from quantipy.core.view_generators.view_maps import QuantipyViews
@@ -22,6 +20,29 @@ import dill
 import json
 import copy
 
+from scipy.stats.stats import _ttest_finish as get_pval
+from itertools import combinations, chain, product
+from collections import defaultdict, OrderedDict
+import quantipy as qp
+import pandas as pd
+import numpy as np
+from operator import add, sub, mul, div
+from quantipy.core.view import View
+from quantipy.core.cache import Cache
+from quantipy.core.tools.view.logic import (
+    has_any, has_all, has_count,
+    not_any, not_all, not_count,
+    is_lt, is_ne, is_gt,
+    is_le, is_eq, is_ge,
+    union, intersection, get_logic_index)
+from quantipy.core.helpers.functions import emulate_meta
+from quantipy.core.tools.dp.prep import recode
+
+import copy
+import time
+
+##############################################################################
+
 class Quantity(object):
     """
     The Quantity object is the main Quantipy aggregation engine.
@@ -35,30 +56,29 @@ class Quantity(object):
     # -------------------------------------------------
     # Instance initialization
     # -------------------------------------------------
-    def __init__(self, link, weight=None, use_meta=True, base_all=False):
+    def __init__(self, link, weight=None, use_meta=False, base_all=False):
         # Collect information on wv, x- and y-section
-        self.quantified = True
-        self.is_weighted=False
         self._uses_meta = use_meta
-        self.d = link.data
-        self.ds = link.dataset
+        self.ds = self._convert_to_dataset(link)
+        self.d = self._data
         self.base_all = base_all
-        self._dataidx = link.data().index
+        self._dataidx = link.get_data().index
         if self._uses_meta:
-            self.meta = link.meta
+            self.meta = self._meta
             if self.meta().values() == [None] * len(self.meta().values()):
                 self._uses_meta = False
                 self.meta = None
         else:
             self.meta = None
-        self.cache = link.cache
-        self.f = link.filters
+        self._cache = link.get_cache()
+        self.f = link.filter
         self.x = link.x
         self.y = link.y
         self.w = weight if weight is not None else '@1'
+        self.is_weighted = False
         self.type = self._get_type()
         if self.type == 'nested':
-            self.nest_def = Nest(self.y, self.d, self.meta).nest()
+            self.nest_def = Nest(self.y, self.d(), self.meta()).nest()
         self._squeezed = False
         self.idx_map = None
         self.xdef = self.ydef = None
@@ -74,24 +94,41 @@ class Quantity(object):
         self.calc_x = self.calc_y = None
         self._has_x_margin = self._has_y_margin = False
 
-
     def __repr__(self):
         if self.result is not None:
             return '%s' % (self.result)
         else:
-            info = 'Link - id: {}\nstack connected: {} | views: {}'
-            return info.format(self.id, self.stack_connection, len(self.values()))
+            return 'Quantity - x: {}, xdef: {} y: {}, ydef: {}, w: {}'.format(
+                self.x, self.xdef, self.y, self.ydef, self.w)
 
     # -------------------------------------------------
     # Matrix creation and retrievel
     # -------------------------------------------------
+    def _convert_to_dataset(self, link):
+        ds = qp.DataSet('')
+        ds._data = link.stack[link.data_key].data
+        ds._meta = link.get_meta()
+        return ds
+
+    def _data(self):
+        return self.ds._data
+
+    def _meta(self):
+        return self.ds._meta
+
     def _get_type(self):
         """
         Test variable type that can be "simple", "nested" or "array".
         """
         if self._uses_meta:
-            if self.x in self.meta()['masks'].keys():
-                if self.meta()['masks'][self.x]['type'] == 'array':
+            masks = [self.x, self.y]
+            if any(mask in self.meta()['masks'].keys() for mask in masks):
+                mask = {
+                    True: self.x,
+                    False: self.y}.get(self.x in self.meta()['masks'].keys())
+                if self.meta()['masks'][mask]['type'] == 'array':
+                    if self.x == '@':
+                        self.x, self.y = self.y, self.x
                     return 'array'
             elif '>' in self.y:
                 return 'nested'
@@ -113,19 +150,21 @@ class Quantity(object):
         """
         Weight by multiplying the indicator entries with the weight vector.
         """
-        if self.is_weighted:
-            self.matrix[:, 1:, 1:] *=  np.atleast_3d(self.wv)
-        else:
-            self.matrix *= np.atleast_3d(self.wv)
-        self.is_weighted = True
+        self.matrix *= np.atleast_3d(self.wv)
+        # if self.is_weighted:
+        #     self.matrix[:, 1:, 1:] *=  np.atleast_3d(self.wv)
+        # else:
+        #     self.matrix *= np.atleast_3d(self.wv)
+        # self.is_weighted = True
         return None
 
     def unweight(self):
         """
         Remove any weighting by dividing the matrix by itself.
         """
-        self.matrix[:, 1:, 1:] /= self.matrix[:, 1:, 1:]
-        self.is_weighted = True
+        self.matrix /= self.matrix
+        # self.matrix[:, 1:, 1:] /= self.matrix[:, 1:, 1:]
+        # self.is_weighted = False
         return None
 
     def _get_total(self):
@@ -162,7 +201,7 @@ class Quantity(object):
         """
         if text_key is None: text_key = 'main'
         if self.type == 'array':
-            restexts = [v[text_key] for v in self.meta['lib']['values'][var]]
+            restexts = [v[text_key] for v in self.meta()['lib']['values'][var]]
         else:
             values = emulate_meta(
                 self.meta(), self.meta()['columns'][var].get('values', None))
@@ -386,16 +425,34 @@ class Quantity(object):
                 else:
                     return missingfied
 
-    def _organize_missings(self, missings):
+    def _organize_global_missings(self, missings):
         hidden = [c for c in missings.keys() if missings[c] == 'hidden']
         excluded = [c for c in missings.keys() if missings[c] == 'excluded']
         shown = [c for c in missings.keys() if missings[c] == 'shown']
         return hidden, excluded, shown
 
-    def _clean_from_missings(self):
-        if self.ds._has_missings(self.x):
-            missings = self.ds()._get_missings(self.x)
-            hidden, excluded, shown = self._organize_missings(missings)
+    def _organize_stats_missings(self, missings):
+        excluded = [c for c in missings.keys()
+                    if missings[c] in ['d.excluded', 'excluded']]
+        return excluded
+
+    def _autodrop_stats_missings(self):
+        if self.x == '@':
+            pass
+        elif self.ds._has_missings(self.x):
+            missings = self.ds._get_missings(self.x)
+            to_drop = self._organize_stats_missings(missings)
+            self.exclude(to_drop)
+        else:
+            pass
+        return None
+
+    def _clean_from_global_missings(self):
+        if self.x == '@':
+            pass
+        elif self.ds._has_missings(self.x):
+            missings = self.ds._get_missings(self.x)
+            hidden, excluded, shown = self._organize_global_missings(missings)
             if excluded:
                 excluded_codes = excluded
                 excluded_idxer = self._missingfy(excluded, keep_base=False,
@@ -615,7 +672,7 @@ class Quantity(object):
         if not self._grp_type(grp_def) == 'block':
             grp_def = [{'net': grp_def, 'expand': method_expand}]
         for grp in grp_def:
-            if self._grp_type(grp.values()[0]) in ['logical', 'wildcard']:
+            if any(isinstance(val, (tuple, dict)) for val in grp.values()):
                 if complete:
                     ni_err = ('Logical expr. unsupported when complete=True. '
                               'Only list-type nets/groups can be completed.')
@@ -937,6 +994,7 @@ class Quantity(object):
         if self.is_empty:
             self.result = self._empty_result()
         else:
+            self._autodrop_stats_missings()
             if stat == 'summary':
                 stddev, mean, base = self._dispersion(axis, measure='sd',
                                                       _return_mean=True,
@@ -1259,51 +1317,47 @@ class Quantity(object):
         #TIME & SIZE WILL SUFFER. WE CAN DEL THE "SQUEEZED" COLLECTION AT
         #SAVE STAGE.
         #=====================================================================
-        # self.cache().set_obj(collection='squeezed',
+        # self._cache.set_obj(collection='squeezed',
         #                     key=self.f+self.w+self.x+self.y,
         #                     obj=(self.xdef, self.ydef,
         #                          self._x_indexers, self._y_indexers,
         #                          self.wv, self.matrix, self.idx_map))
 
     def _get_matrix(self):
-        wv = self.cache().get_obj('weight_vectors', self.w)
-        # wv = None
+        wv = self._cache.get_obj('weight_vectors', self.w)
         if wv is None:
             wv = self._get_wv()
-            self.cache().set_obj('weight_vectors', self.w, wv)
-        total = self.cache().get_obj('weight_vectors', '@1')
-        # total = None
+            self._cache.set_obj('weight_vectors', self.w, wv)
+        total = self._cache.get_obj('weight_vectors', '@1')
         if total is None:
             total = self._get_total()
-            self.cache().set_obj('weight_vectors', '@1', total)
+            self._cache.set_obj('weight_vectors', '@1', total)
         if self.type == 'array':
             xm, self.xdef, self.ydef = self._dummyfy()
             self.matrix = np.concatenate((xm, wv), 1)
         else:
             if self.y == '@' or self.x == '@':
                 section = self.x if self.y == '@' else self.y
-                xm, self.xdef = self.cache().get_obj('matrices', section)
-                #xm = None
+                xm, self.xdef = self._cache.get_obj('matrices', section)
                 if xm is None:
                     xm, self.xdef = self._dummyfy(section)
-                    self.cache().set_obj('matrices', section, (xm, self.xdef))
+                    self._cache.set_obj('matrices', section, (xm, self.xdef))
                 self.ydef = None
                 self.matrix = np.concatenate((total, xm, total, wv), 1)
             else:
-                xm, self.xdef = self.cache().get_obj('matrices', self.x)
-                # xm = None
+                xm, self.xdef = self._cache.get_obj('matrices', self.x)
                 if xm is None:
                     xm, self.xdef = self._dummyfy(self.x)
-                    self.cache().set_obj('matrices', self.x, (xm, self.xdef))
-                ym, self.ydef = self.cache().get_obj('matrices', self.y)
+                    self._cache.set_obj('matrices', self.x, (xm, self.xdef))
+                ym, self.ydef = self._cache.get_obj('matrices', self.y)
                 if ym is None:
                     ym, self.ydef = self._dummyfy(self.y)
-                    self.cache().set_obj('matrices', self.y, (ym, self.ydef))
+                    self._cache.set_obj('matrices', self.y, (ym, self.ydef))
                 self.matrix = np.concatenate((total, xm, total, ym, wv), 1)
         self.matrix = self.matrix[self._dataidx]
         self.matrix = self._clean()
         self._squeeze_dummies()
-        self._clean_from_missings()
+        self._clean_from_global_missings()
         return self.matrix
 
     def _dummyfy(self, section=None):
@@ -1517,7 +1571,10 @@ class Quantity(object):
             if self._has_y_margin or self.y == '@' or self.x == '@':
                 base = self.cbase
             else:
-                base = self.cbase[:, 1:]
+                if self._get_type() == 'array':
+                    base = self.cbase
+                else:
+                    base = self.cbase[:, 1:]
         else:
             if self._has_x_margin:
                 base = self.rbase
@@ -2207,166 +2264,22 @@ class Nest(object):
         interlocked_qtexts = list(product(*all_qtexts))
         return interlocked_qtexts, interlocked_valtexts
 
-class Multivariate(object):
+class Stat(object):
     """
-    An object that collects statistical algorithms, tools and functions.
-
-    DESCP
+    The Quantipy Stat object is a defined....
     """
-    def __init__(self, stack, data_key, filters=None):
-        super(Multivariate, self).__init__()
-        self.stack = stack
-        self.data_key = data_key
-        self.filter_def = 'no_filter' if filters is None else filters
-        self.data = stack[data_key][self.filter_def].data
-        self.prep = False
-        self.analysis_data = None
-        self.current_analysis = None
-        self.link = None
-        self.single_quantities = []
-        self.cross_quantities = []
-        self.w = None
-        self.x = None
-        self.y = None
-        self.w = None
-
-    def _validate_input_structure(self, analysis, x, y, w):
-        """
-        Check if provided x and y variables are valid for the analysis method.
-        """
-        one_x = len(x) == 1
-        one_y = len(y) == 1
-        invalid = False
-        if analysis in ['correlation', 'covariance']:
-            supported = ''
-            pass
-        elif analysis in ['correspondence', 'mass', 'chisq',
-                          'expected_counts']:
-            if not (one_x and one_y):
-                invalid = True
-            elif y[0] == '@':
-                invalid = True
-        elif analysis in ['turf', 'reach'] and y != ['@']:
-            invalid = True
-        if invalid:
-            val_error = '"{}" analysis only supported on 1-on-1 relationships.'
-            raise ValueError(val_error.format(analysis))
-
-    def _prepare_analysis(self, analysis_name, x, y, w=None):
-        """
-        Create Quantity instances and set global analysis attributes.
-        """
-        if not self.prep:
-            self.prep = True
-            if y is None: y = '@'
-            if not isinstance(x, list): x = [x]
-            if not isinstance(y, list): y = [y]
-            self._validate_input_structure(analysis_name, x, y, w)
-            sets_meta = {analysis_name: {'x': x, 'y': y, 'w': w}}
-            self.stack[self.data_key].meta['sets'].update({'multivariate': sets_meta})
-            self.current_analysis = analysis_name
-            self.x = x
-            self.y = y
-            self.w = w if w is not None else '@1'
-            if self.y == ['@']:
-                self.analysis_data = self.data[self.x + [self.w]]
-            else:
-                self.analysis_data = self.data[self.x + self.y + [self.w]]
-            if not analysis_name in ['turf']:
-                if self.y == ['@']: y = self.x
-                for x, y in product(self.x, y):
-                    cross_link = qp.Link(the_filter=self.filter_def, x=x, y=y,
-                               data_key=self.data_key, stack=self.stack,
-                               create_views=False)
-                    self.cross_quantities.append(
-                        qp.Quantity(cross_link, weight=self.w, use_meta=True))
-                for x in self.x + self.y:
-                    if x == '@':
-                        pass
-                    else:
-                        single_link = qp.Link(the_filter=self.filter_def, x=x, y='@',
-                                   data_key=self.data_key, stack=self.stack,
-                                   create_views=False)
-                        self.single_quantities.append(
-                            qp.Quantity(single_link, weight=self.w, use_meta=True))
-                if len(self.x) == 1 and len(self.y) == 1:
-                    self.cross_quantities = self.cross_quantities[0]
-                    self.single_quantities = self.single_quantities[0]
-
-    def reach(self, items, base_reach_on=None):
-        """
-        Create a topline Reach analysis for an array of items.
-        """
-        self._prepare_analysis('reach', x=items, y=None, w=None)
-        data = self.analysis_data.ix[:, :-1]
-        topline = pd.concat([pd.DataFrame(data[col].value_counts(),
-                                          columns=[col])
-                             for col in data.columns], axis=1)
-        drop_codes = [code for code in topline.index.tolist()
-                      if code not in base_reach_on]
-        max_reach = len(data.replace(drop_codes, np.NaN).dropna(how='all').index)
-        max_reach = pd.DataFrame([max_reach, 100*float(max_reach)/len(data.index)],
-                                 columns=['Reach']).T
-        freqs = topline.ix[base_reach_on, :].sum()
-        freqs = pd.concat([freqs, freqs.div(len(data.index))*100], axis=1)
-        freqs = pd.concat([freqs, max_reach], axis=0)
-        freqs.columns = ['n', '%']
-        return freqs
-
-    def turf(self, items, max_comb=None, base_reach_on=None):
-        """
-        Run a Total Unduplicated Reach and Frequency model.
-        """
-        pass
-
-    def _show_full_matrix(self):
-        return self.y == ['@']
-
-    def _format_output_pairs(self, nparray):
-        if self._show_full_matrix():
-            return nparray.reshape(len(self.x), len(self.x))
+    def __init__(self, data_input):
+        super(Stat, self).__init__()
+        if isinstance(data_input, qp.Link):
+            self.data = qp.Quantity(data_input)
         else:
-            return nparray.reshape(len(self.x), len(self.y))
+            raise TypeError('Input data format not understood.')
 
-    def _format_result_df(self, nparray):
-        names = [self.current_analysis, 'Questions']
-        if self._show_full_matrix():
-            index = self.x
-            columns = index
-        else:
-            index = self.x
-            columns = self.y
-        return pd.DataFrame(nparray, index=index, columns=columns)
-
-    def _make_index_pairs(self):
-        full_range = len(self.x + self.y) - 1
-        x_range = range(0, len(self.x))
-        y_range = range(x_range[-1] + 1, full_range + 1)
-        if self._show_full_matrix():
-            return list(product(range(0, full_range), repeat=2))
-        else:
-            return list(product(x_range, y_range))
-
-    def mass(self, x, y, w=None, margin=None):
-        """
-        Compute rel. margins or total cell frequencies of a contigency table.
-        """
-        self._prepare_analysis('mass', x, y, w)
-        counts = self.cross_quantities.count(margin=False)
-        total = counts.cbase[0, 0]
-        if margin is None:
-            return counts.result.values / total
-        elif margin == 'x':
-            return  counts.rbase[1:, :] / total
-        elif margin == 'y':
-            return  (counts.cbase[:, 1:] / total).T
-
-    def expected_counts(self, x, y, w=None, return_observed=False):
+    def expected_counts(self, return_observed=False):
         """
         Compute expected cell distribution given observed absolute frequencies.
         """
-        self._prepare_analysis('expected_counts', x, y, w)
-        counts = self.cross_quantities.count(margin=False)
+        counts = self.data.count(margin=False)
         total = counts.cbase[0, 0]
         row_m = counts.rbase[1:, :]
         col_m = counts.cbase[:, 1:]
@@ -2375,12 +2288,23 @@ class Multivariate(object):
         else:
             return counts.result.values, (row_m * col_m) / total
 
-    def chi_sq(self, x, y, w=None, as_inertia=False):
+    def mass(self, margin=None):
         """
-        Compute global Chi^2 statistic, optionally transformed into Inertia.
         """
-        self._prepare_analysis('chisq', x, y, w)
-        obs, exp = self.expected_counts(x=x, y=y, return_observed=True)
+        counts = self.data.count(margin=False)
+        total = counts.cbase[0, 0]
+        if margin is None:
+            return counts.result.values / total
+        elif margin == 'x':
+            return  counts.rbase[1:, :] / total
+        elif margin == 'y':
+            return  (counts.cbase[:, 1:] / total).T
+
+    def chi_sq(self, as_inertia=False):
+        """
+        Compute global chi^2 statistic, optionally transformed into Inertia.
+        """
+        obs, exp = self.expected_counts(return_observed=True)
         diff_matrix = ((obs - exp)**2) / exp
         total_chi_sq = np.nansum(diff_matrix)
         if not as_inertia:
@@ -2388,182 +2312,12 @@ class Multivariate(object):
         else:
             return total_chi_sq / np.nansum(obs)
 
-    def cov(self, x, y, w=None, n=False, as_df=True):
+    def singular_values(self, return_eigen=True, return_eigen_matrices=True):
         """
-        Compute the sample covariance (matrix).
         """
-        self._prepare_analysis('covariance', x, y, w)
-        full_matrix = self._show_full_matrix()
-        pairs = self._make_index_pairs()
-        d = self.analysis_data
-        means = [q.summarize('mean', margin=False, as_df=False).result[0, 0]
-                 for q in self.single_quantities]
-        m_diff = d - (means + [0.0])
-        unbiased_n = [np.nansum(d.ix[:, [ix1, ix2, -1]].dropna().ix[:, -1]) - 1
-                      for ix1, ix2 in pairs]
-        cross_prods = [np.nansum(m_diff.ix[:, -1] *
-                                 m_diff.ix[:, ix1] *
-                                 m_diff.ix[:, ix2])
-                       for ix1, ix2 in pairs]
-        cov = np.array(cross_prods) / unbiased_n
-        if n:
-            paired_n = [n + 1 for n in unbiased_n]
-        if as_df:
-            cov_result = self._format_result_df(self._format_output_pairs(cov))
-        else:
-            cov_result = self._format_output_pairs(cov)
-        if n:
-            return paired_n, cov_result
-        else:
-            return cov_result
-
-    def _mass_std_weights(self):
-        counts = [cq.count(margin=False).result
-                  for cq in self.cross_quantities]
-        mass_coords = [list(product(c.index.get_level_values(1),
-                                    c.columns.get_level_values(1)))
-                       for c in counts]
-        mass_w = [(c/c.values.sum().sum() * 1000) for c in counts]
-        for mw in mass_w:
-            mw.index, mw.columns = mw.index.droplevel(), mw.columns.droplevel()
-        x, y = self.x, self.y if not self.y == ['@'] else self.x
-        data = self.analysis_data.copy()
-        var_combs = list(product(x, y))
-        comb_vars_names = ['x'.join(var_comb) for var_comb in var_combs]
-        for comb_no, comb_vars in enumerate(var_combs):
-            comb_var = comb_vars_names[comb_no]
-            data[comb_var] = np.NaN
-            for mass_coord in mass_coords[comb_no]:
-                coord_idx = data[(data[comb_vars[0]]==mass_coord[0]) &
-                                 (data[comb_vars[1]]==mass_coord[1])].index
-                coord_value = mass_w[comb_no].loc[mass_coord[0],
-                                                  mass_coord[1]]
-                data.loc[coord_idx, comb_var] = coord_value
-        weights = [data[mw].dropna().values.flatten().tolist()
-                   for mw in comb_vars_names]
-        return weights
-
-    def corr(self, x, y, w=None, scatter=True, sigs=False, n=False, as_df=True):
-        """
-        Generate the sample Pearson correlation coeffcients (matrix).
-
-        Also able to generate scatter plots related to the variable pairs: data
-        points of categorical variables will be mass-standardized to reflect
-        contigency table frequencies.
-        """
-        self._prepare_analysis('correlation', x, y, w=w)
-        full_matrix = self._show_full_matrix()
-        pairs = self._make_index_pairs()
-        cov = self.cov(x=x, y=y, w=w, n=n, as_df=False)
-        if n:
-            ns, cov = cov[0], cov[1].flatten()
-        else:
-            cov = cov.flatten()
-        stddev = [q.summarize('stddev', margin=False, as_df=False).result[0, 0]
-                  for q in self.single_quantities]
-        normalizer = [stddev[ix1] * stddev[ix2] for ix1, ix2 in pairs]
-        corrs = cov / normalizer
-
-        corr_df = self._format_result_df(self._format_output_pairs(corrs))
-        pal = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
-        corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
-                         square=True, robust=True, cmap=pal,
-                         center=np.mean(corr_df.values), linewidth=0.5)
-        fig = corr_res.get_figure()
-        fig.savefig('C:/Users/alt/Desktop/Bugs and testing/MENA CA/test2.png')
-
-
-        stdizers = self._mass_std_weights()
-        sns.set_style('dark')
-        sns.set_context('paper')
-        data = self.analysis_data[:-1]
-        x, y = self.x, self.y if self.y != ['@'] else self.x
-        plot = sns.pairplot(data, dropna=True, x_vars=y, y_vars=x,
-                            diag_kind=None, kind=None)
-        subplots = plot.fig.get_axes()
-        for corr, n, ax, pair, stdizer in zip(corrs, ns, subplots, pairs, stdizers):
-            ax.set_title('pearson={} (N={})'.format(np.round(corr, 2), int(np.round(n, 0))))
-            ax.scatter(x=data.iloc[:, pair[1]], y=data.iloc[:, pair[0]],
-                       s=stdizer,edgecolor='w', marker='o', c='r')
-        #plot.fig.get_axes()[-1] = (test.get_figure())
-
-        plot.fig.subplots_adjust(top=0.9)
-        plot.fig.suptitle('Scatterplots\n-mass-standarized-', fontsize=12)
-
-        plot.savefig('C:/Users/alt/Desktop/Bugs and testing/MENA CA/check.png')
-
-        if as_df:
-            corr = self._format_result_df(self._format_output_pairs(corrs))
-        else:
-            corr = self._format_output_pairs(corrs)
-        return corr
-
-    def correspondence(self, x, y, w=None, norm='sym', summary=True, plot=False):
-        """
-        Perform a (multiple) correspondence analysis.
-
-        Parameters
-        ----------
-        norm : {'sym', 'princ'}, default 'sym'
-            <DESCP>
-        summary : bool, default True
-            If True, the output will contain a dataframe that summarizes core
-            information about the Inertia decomposition.
-        plot : bool, default False
-            If set to True, a correspondence map plot will be saved in the
-            Stack's data path location.
-        Returns
-        -------
-        results: pd.DataFrame
-            Summary of analysis results.
-        """
-        self._prepare_analysis('correspondence', x, y, weight)
-        # 1. Chi^2 analysis
-        obs, exp = self.expected_counts(x=x, y=y, return_observed=True)
-        chisq = self.chi_sq(x=x, y=y)
-        inertia = chisq / np.nansum(obs)
-        # 2. svd on standardized residuals
-        std_residuals = ((obs - exp) / np.sqrt(exp)) / np.sqrt(np.nansum(obs))
-        sv, row_eigen_mat, col_eigen_mat, ev = self._svd(std_residuals)
-        # 3. row and column coordinates
-        a = 0.5 if norm == 'sym' else 1.0
-        row_mass = self.mass(x=x, y=y, margin='x')
-        col_mass = self.mass(x=x, y=y, margin='y')
-        dim = min(row_mass.shape[0]-1, col_mass.shape[0]-1)
-        row_sc = (row_eigen_mat * sv[:, 0] ** a) / np.sqrt(row_mass)
-        col_sc = (col_eigen_mat.T * sv[:, 0] ** a) / np.sqrt(col_mass)
-        if plot:
-            # prep coordinates for plot
-            item_sep = len(self.data.xdef)
-            dim1_c = [r_s[0] for r_s in row_sc] + [c_s[0] for c_s in col_sc]
-            dim2_c = [r_s[1] for r_s in row_sc] + [c_s[1] for c_s in col_sc]
-            dim1_xitem, dim2_xitem = dim1_c[:item_sep+1], dim2_c[:item_sep+1]
-            dim1_yitem, dim2_yitem = dim1_c[item_sep:], dim2_c[item_sep:]
-            coords = {'x': [dim1_xitem, dim2_xitem],
-                      'y': [dim1_yitem, dim2_yitem]}
-            self.plot('CA', coords)
-        if summary:
-            # core results summary table
-            _dim = xrange(1, dim+1)
-            _chisq = ([np.NaN] * (dim-1)) + [chisq]
-            _sv, _ev = sv[:dim, 0], ev[:dim, 0]
-            _expl_inertia = 100 * (ev[:dim, 0] / inertia)
-            _cumul_expl_inertia = np.cumsum(_expl_inertia)
-            _perc_chisq = _expl_inertia / 100 * chisq
-            labels = ['Dimension', 'Total Chi^2', 'Singular values', 'Eigen values',
-                     'explained % of Inertia', 'cumulative % explained',
-                     'explained Chi^2']
-            results = pd.DataFrame([_dim, _chisq, _sv, _ev, _expl_inertia,
-                                    _cumul_expl_inertia,_perc_chisq]).T
-            results.columns = labels
-            results.set_index('Dimension', inplace=True)
-            return results
-
-    def _svd(self, matrix, return_eigen_matrices=True, return_eigen=True):
-        """
-        Singular value decomposition wrapping np.linalg.svd().
-        """
-        u, s, v = np.linalg.svd(matrix, full_matrices=False)
+        obs, exp = self.expected_counts(return_observed=True)
+        residuals = ((obs - exp) / np.sqrt(exp)) / np.sqrt(np.nansum(obs))
+        u, s, v = np.linalg.svd(residuals, full_matrices=False)
         s = s[:, None]
         if not return_eigen:
             if return_eigen_matrices:
@@ -2576,48 +2330,29 @@ class Multivariate(object):
             else:
                 return s, (s ** 2)
 
-    def plot(self, type, point_coords):
-        plt.set_autoscale_on = False
-        plt.figure(figsize=(10, 10))
-        if type == 'CA':
-            plt.suptitle('Correspondence map\n-Symmetrical biplot-',
-                         fontsize=14, fontweight='bold')
-            plt.xlim([-1, 1])
-            plt.ylim([-1, 1])
-            plt.axvline(x=0.0, c='k', ls='solid')
-            plt.axhline(y=0.0, c='k', ls='solid')
-            plt.scatter(point_coords['x'][0], point_coords['x'][1],
-                        c='r', marker='^', s=40)
-            plt.scatter(point_coords['y'][0], point_coords['y'][1],
-                        s=40)
-            label_map = self._get_point_label_map('CA', point_coords)
-            for axis in label_map.keys():
-                for lab, coord in label_map[axis].items():
-                    plt.annotate(lab, coord, fontsize=10)
-
-            plt.savefig('C:/Users/alt/Desktop/Bugs and testing/MENA CA/test.pdf')
-
-    def set_plot_options(self, option, value):
+    def correspondence(self, method='chi_sq', summary=True, plot=None):
         """
+        Perform a (multiple) correspondence analysis.
+
+        Parameters
+        ----------
+        method: {'chi_sq', 'euclidian'}, default 'chi_sq'
+            DESCP
+        summary: bool, default True
+            DESCP
+        plot: {None, 'sym', '', '', ''}, default 'sym'
+            DESCP
+
+        Returns
+        -------
+        DESCP
         """
-        plot_options = {
-            'val_labels_in_legend': False,
-        }
+        sv, row_eigen_mat, col_eigen_mat, ev = self.singular_values()
+        inertia = ev.sum()
+        row_mass = self.mass('x')
+        col_mass = self.mass('y')
+        print ((row_eigen_mat * sv) / np.sqrt(row_mass))
 
-    def _get_point_label_map(self, type, point_coords):
-        if type == 'CA':
-            xcoords = zip(point_coords['x'][0],point_coords['x'][1])
-            xlabels = self.data._get_response_texts(self.data.x)
-            x_point_map = {lab: coord for lab, coord in zip(xlabels, xcoords)}
-            ycoords = zip(point_coords['y'][0], point_coords['y'][1])
-            ylabels = self.data._get_response_texts(self.data.y)
-            y_point_map = {lab: coord for lab, coord in zip(ylabels, ycoords)}
-            return {'x': x_point_map, 'y': y_point_map}
-
-
-##############################################################################
-##############################################################################
-##############################################################################
 
 class Cache(defaultdict):
 
@@ -2673,347 +2408,6 @@ class Cache(defaultdict):
             return self[collection].get(key, (None, None, None, None, None, None, None))
         else:
             return self[collection].get(key, None)
-
-##############################################################################
-##############################################################################
-##############################################################################
-
-class DataSet(object):
-    """
-    A set of casedata (required) and meta data (optional).
-
-    DESC.
-    """
-    def __init__(self, name):
-        self.path = None
-        self.name = name
-        self.filtered = 'no_filter'
-        self._data = None
-        self._meta = None
-        self._tk = None
-        self._cache = Cache()
-
-    # ------------------------------------------------------------------------
-    # ITEM ACCESS / OVERRIDING
-    # ------------------------------------------------------------------------
-    def __getitem__(self, var):
-        if isinstance(var, (unicode, str)):
-            if not self._is_array(var):
-                return self._data[var]
-            else:
-                items = self._get_itemmap(var, non_mapped='items')
-                return self._data[items]
-        else:
-            return self._data[var]
-
-    # ------------------------------------------------------------------------
-    # I/O
-    # ------------------------------------------------------------------------
-    def read(self, path_data, path_meta):
-        self._data = qp.dp.io.load_csv(path_data+'.csv')
-        self._meta = qp.dp.io.load_json(path_meta+'.json')
-        self.path = '/'.join(path_data.split('/')[:-1])
-        self._tk = self._meta['lib']['default text']
-        self._data['@1'] = np.ones(len(self._data))
-        self._data.index = list(xrange(0, len(self._data.index)))
-
-    def data(self):
-        return self._data
-
-    def meta(self):
-        return self._meta
-
-    def cache(self):
-        return self._cache
-
-    # ------------------------------------------------------------------------
-    # META INSPECTION/MANIPULATION/HANDLING
-    # ------------------------------------------------------------------------
-    def set_missings(self, var, missing_map=None):
-        if missing_map is None:
-            missing_map = {}
-        if any(isinstance(k, tuple) for k in missing_map.keys()):
-            flat_missing_map = {}
-            for miss_code, miss_type in missing_map.items():
-                if isinstance(miss_code, tuple):
-                    for code in miss_code:
-                        flat_missing_map[code] = miss_type
-                else:
-                    flat_missing_map[miss_code] = miss_type
-            missing_map = flat_missing_map
-        if self._is_array(var):
-            var = self._get_itemmap(var, non_mapped='items')
-        else:
-            if not isinstance(var, list): var = [var]
-        for v in var:
-            if self._has_missings(v):
-                self.meta()['columns'][v].update({'missings': missing_map})
-            else:
-                self.meta()['columns'][v]['missings'] = missing_map
-
-    def _get_missings(self, var):
-        if self._is_array(var):
-            var = self._get_itemmap(var, non_mapped='items')
-        else:
-            if not isinstance(var, list): var = [var]
-        for v in var:
-            if self._has_missings(v):
-                return self.meta()['columns'][v]['missings']
-            else:
-                return None
-
-    def describe(self, var=None, restrict_to=None, text_key=None):
-        """
-        Inspect the DataSet's global or variable level structure.
-        """
-        if text_key is None: text_key = self._tk
-        if var is not None:
-            return self._get_meta(var, restrict_to, text_key)
-        if self._meta['columns'] is None:
-            return 'No meta attached to data_key: %s' %(data_key)
-        else:
-            types = {
-                'int': [],
-                'float': [],
-                'single': [],
-                'delimited set': [],
-                'string': [],
-                'date': [],
-                'time': [],
-                'array': [],
-                'N/A': []
-            }
-            not_found = []
-            for col in self._data.columns:
-                if not col in ['@1', 'id_L1', 'id_L1.1']:
-                    try:
-                        types[
-                              self._meta['columns'][col]['type']
-                             ].append(col)
-                    except:
-                        types['N/A'].append(col)
-            for mask in self._meta['masks'].keys():
-                types[self._meta['masks'][mask]['type']].append(mask)
-            idx_len = max([len(t) for t in types.values()])
-            for t in types.keys():
-                typ_padded = types[t] + [''] * (idx_len - len(types[t]))
-                types[t] = typ_padded
-            types = pd.DataFrame(types)
-            types.columns.name = 'size: {}'.format(len(self._data))
-            if restrict_to:
-                types = pd.DataFrame(types[restrict_to]).replace('', np.NaN)
-                types = types.dropna()
-                types.columns.name = 'count: {}'.format(len(types))
-            return types
-
-    def _get_type(self, var):
-        if var in self._meta['masks'].keys():
-            return self._meta['masks'][var]['type']
-        else:
-             return self._meta['columns'][var]['type']
-
-    def _has_missings(self, var):
-        return 'missings' in self.meta()['columns'][var].keys()
-
-    def _is_numeric(self, var):
-        return self._get_type(var) in ['float', 'int']
-
-    def _is_array(self, var):
-        return self._get_type(var) == 'array'
-
-    def _is_multicode_array(self, mask_element):
-        return self[mask_element].dtype == 'object'
-
-    def _get_label(self, var, text_key=None):
-        if text_key is None: text_key = self._tk
-        if self._get_type(var) == 'array':
-            return self._meta['masks'][var]['text'][text_key]
-        else:
-            return self._meta['columns'][var]['text'][text_key]
-
-    def _get_valuemap(self, var, text_key=None, non_mapped=None):
-        if text_key is None: text_key = self._tk
-        if self._get_type(var) == 'array':
-            vals = self._meta['lib']['values'][var]
-        else:
-            vals = emulate_meta(self._meta,
-                                self._meta['columns'][var].get('values', None))
-        if non_mapped in ['codes', 'lists', None]:
-            codes = [v['value'] for v in vals]
-            if non_mapped == 'codes':
-                return codes
-        if non_mapped in ['texts', 'lists', None]:
-            texts = [v['text'][text_key] for v in vals]
-            if non_mapped == 'texts':
-                return texts
-        if non_mapped == 'lists':
-            return codes, texts
-        else:
-            return zip(codes, texts)
-
-    def _get_itemmap(self, var, text_key=None, non_mapped=None):
-        if text_key is None: text_key = self._tk
-        if non_mapped in ['items', 'lists', None]:
-            items = [i['source'].split('@')[-1]
-                     for i in self._meta['masks'][var]['items']]
-            if non_mapped == 'items':
-                return items
-        if non_mapped in ['texts', 'lists', None]:
-            items_texts = [self._meta['columns'][i]['text'][text_key]
-                           for i in items]
-            if non_mapped == 'texts':
-                return items_texts
-        if non_mapped == 'lists':
-            return items, items_texts
-        else:
-            return zip(items, items_texts)
-
-    def _get_meta(self, var, restrict_to=None,  text_key=None):
-        if text_key is None: text_key = self._tk
-        var_type = self._get_type(var)
-        label = self._get_label(var, text_key)
-        missings = self._get_missings(var)
-        if not self._is_numeric(var):
-            codes, texts = self._get_valuemap(var, non_mapped='lists')
-            if missings:
-                missings = [None if code not in missings else missings[code]
-                            for code in codes]
-            else:
-                missings = [None] * len(codes)
-            if var_type == 'array':
-                items, items_texts = self._get_itemmap(var, non_mapped='lists')
-                idx_len = max((len(codes), len(items)))
-                if len(codes) > len(items):
-                    pad = (len(codes) - len(items))
-                    items = self._pad_meta_list(items, pad)
-                    items_texts = self._pad_meta_list(items_texts, pad)
-                elif len(codes) < len(items):
-                    pad = (len(items) - len(codes))
-                    codes = self._pad_meta_list(codes, pad)
-                    texts = self._pad_meta_list(texts, pad)
-                    missings = self._pad_meta_list(missings, pad)
-                elements = [items, items_texts, codes, texts, missings]
-                columns = ['items', 'item texts', 'codes', 'texts', 'missing type']
-            else:
-                idx_len = len(codes)
-                elements = [codes, texts, missings]
-                columns = ['codes', 'texts', 'missing type']
-            meta_s = [pd.Series(element, index=range(0, idx_len))
-                      for element in elements]
-            meta_df = pd.concat(meta_s, axis=1)
-            meta_df.columns = columns
-            meta_df.index.name = var_type
-            meta_df.columns.name = '{}: {}'.format(var, label)
-        else:
-            meta_df = pd.DataFrame(['N/A'])
-            meta_df.index = [var_type]
-            meta_df.columns = ['{}: {}'.format(var, label)]
-        return meta_df
-
-    @staticmethod
-    def _pad_meta_list(meta_list, pad_to_len):
-        return meta_list + ([''] * pad_to_len)
-
-    # ------------------------------------------------------------------------
-    # DATA MANIPULATION/HANDLING
-    # ------------------------------------------------------------------------
-    def make_dummy(self, var):
-        if not self._is_array(var):
-            if self[var].dtype == 'object': # delimited set-type data
-                dummy_data = self[var].str.get_dummies(';')
-                if self.meta is not None:
-                    var_codes = self._get_valuemap(var, non_mapped='codes')
-                    dummy_data.columns = [int(col) for col in dummy_data.columns]
-                    dummy_data = dummy_data.reindex(columns=var_codes)
-                    dummy_data.replace(np.NaN, 0, inplace=True)
-                if self.meta:
-                    dummy_data.sort_index(axis=1, inplace=True)
-            else: # single, int, float data
-                dummy_data = pd.get_dummies(self[var])
-                if self.meta and not self._is_numeric(var):
-                    var_codes = self._get_valuemap(var, non_mapped='codes')
-                    dummy_data = dummy_data.reindex(columns=var_codes)
-                    dummy_data.replace(np.NaN, 0, inplace=True)
-                dummy_data.rename(
-                    columns={
-                        col: int(col)
-                        if float(col).is_integer()
-                        else col
-                        for col in dummy_data.columns
-                    },
-                    inplace=True)
-        else: # array-type data
-            items = self._get_itemmap(var, non_mapped='items')
-            codes = self._get_valuemap(var, non_mapped='codes')
-            dummy_data = []
-            if self._is_multicode_array(items[0]):
-                for i in items:
-                    i_dummy = self[i].str.get_dummies(';')
-                    i_dummy.columns = [int(col) for col in i_dummy.columns]
-                    dummy_data.append(i_dummy.reindex(columns=codes))
-            else:
-                for i in items:
-                    dummy_data.append(
-                        pd.get_dummies(self[i]).reindex(columns=codes))
-            dummy_data = pd.concat(dummy_data, axis=1)
-            cols = ['{}_{}'.format(i, c) for i in items for c in codes]
-            dummy_data.columns = cols
-        return dummy_data
-
-    def code_count(self, var, ignore=None, total=None):
-        data = self.make_dummy(var)
-        is_array = self._is_array(var)
-        if ignore:
-            if ignore == 'meta': ignore = self._get_missings(var).keys()
-            if is_array:
-                ignore = [col for col in data.columns for i in ignore
-                          if col.endswith(str(i))]
-            slicer = [code for code in data.columns if code not in ignore]
-            data = data[slicer]
-        if total:
-            return data.sum().sum()
-        else:
-            if is_array:
-                items = self._get_itemmap(var, non_mapped='items')
-                data = pd.concat([data[[col for col in data.columns
-                                        if col.startswith(item)]].sum(axis=1)
-                                  for item in items], axis=1)
-                data.columns = items
-            else:
-                data = pd.DataFrame(data.sum(axis=0))
-                data.columns = [var]
-            return data
-
-    def filter(self, alias, condition, inplace=False):
-        """
-        Filter the DataSet using a Quantipy logical expression.
-        """
-        if not inplace:
-            data = self._data.copy()
-        else:
-            data = self._data
-        filter_idx = get_logic_index(pd.Series(data.index), condition, data)
-        filtered_data = data.iloc[filter_idx[0], :]
-        if inplace:
-            self.filtered = alias
-            self._data = filtered_data
-        else:
-            new_ds = DataSet(self.name)
-            new_ds._data = filtered_data
-            new_ds._meta = self._meta
-            new_ds.filtered = alias
-            return new_ds
-
-    # ------------------------------------------------------------------------
-    # LINK OBJECT CONVERSION & HANDLERS
-    # ------------------------------------------------------------------------
-    def link(self, filters=None, x=None, y=None, views=None):
-        """
-        Create a Link instance from the DataSet.
-        """
-        if filters is None: filters = 'no_filter'
-        l = Link(self, filters, x, y)
-        return l
 
 ##############################################################################
 
