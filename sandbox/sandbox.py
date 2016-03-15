@@ -393,7 +393,7 @@ class Quantity(object):
         return hidden, excluded, shown
 
     def _clean_from_missings(self):
-        if self.ds()._has_missings(self.x):
+        if self.ds._has_missings(self.x):
             missings = self.ds()._get_missings(self.x)
             hidden, excluded, shown = self._organize_missings(missings)
             if excluded:

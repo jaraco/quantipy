@@ -1,6 +1,16 @@
 import numpy as np
 import pandas as pd
 import quantipy as qp
+
+from quantipy.core.tools.dp.io import (
+    read_quantipy as r_quantipy,
+    read_dimensions as r_dimensions,
+    read_decipher as r_decipher,
+    read_spss as r_spss,
+    read_ascribe as r_ascribe,
+    write_spss as w_spss,
+    write_quantipy as w_quantipy)
+
 from quantipy.core.helpers.functions import emulate_meta
 from quantipy.core.tools.view.logic import (
     has_any, has_all, has_count,
@@ -9,6 +19,8 @@ from quantipy.core.tools.view.logic import (
     is_le, is_eq, is_ge,
     union, intersection, get_logic_index)
 from cache import Cache
+
+
 
 class DataSet(object):
     """
@@ -41,13 +53,27 @@ class DataSet(object):
     # ------------------------------------------------------------------------
     # I/O
     # ------------------------------------------------------------------------
-    def read(self, path_data, path_meta):
-        self._data = qp.dp.io.load_csv(path_data+'.csv')
-        self._meta = qp.dp.io.load_json(path_meta+'.json')
+    def read_quantipy(self, path_meta, path_data):
+        self._meta, self._data = r_quantipy(path_meta+'.json', path_data+'.csv')
+        self._set_file_info(path_data, path_meta)
+
+    def read_dimensions(self, path_meta, path_data):
+        self._meta, self._data = r_quantipy(path_meta+'.mdd', path_data+'.ddf')
+        self._set_file_info(path_data, path_meta)
+
+    def read_spss(self, path_sav, **kwargs):
+        self._meta, self._data = r_spss(path_sav+'.sav', **kwargs)
+        self._set_file_info(path_data)
+
+    def _set_file_info(self, path_data, path_meta=None):
         self.path = '/'.join(path_data.split('/')[:-1])
-        self._tk = self._meta['lib']['default text']
+        if path_meta:
+            self._tk = self._meta['lib']['default text']
+        else:
+            self._tk = None
         self._data['@1'] = np.ones(len(self._data))
         self._data.index = list(xrange(0, len(self._data.index)))
+        return None
 
     def data(self):
         return self._data
@@ -58,10 +84,27 @@ class DataSet(object):
     def cache(self):
         return self._cache
 
+    def split(self):
+        return self._data, self._meta
+
     # ------------------------------------------------------------------------
     # META INSPECTION/MANIPULATION/HANDLING
     # ------------------------------------------------------------------------
     def set_missings(self, var, missing_map=None):
+        """
+        Flag category defintions in the meta for exclusion in aggregations.
+
+        Parameters
+        ----------
+        var : str or list of str
+            Variable(s) to apply the meta flags to.
+        missing_map: dict of code: flag or tuple of codes: flag
+            DESC
+
+        Returns
+        -------
+        None
+        """
         if missing_map is None:
             missing_map = {}
         if any(isinstance(k, tuple) for k in missing_map.keys()):

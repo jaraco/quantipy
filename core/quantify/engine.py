@@ -38,12 +38,13 @@ class Quantity(object):
     def __init__(self, link, weight=None, use_meta=False, base_all=False):
         # Collect information on wv, x- and y-section
         self._uses_meta = use_meta
-        self.d = link.stack[link.data_key].data
+        self.ds = self._convert_to_dataset(link)
+        self.d = self._data
         self.base_all = base_all
         self._dataidx = link.get_data().index
         if self._uses_meta:
-            self.meta = link.get_meta()
-            if self.meta.values() == [None] * len(self.meta.values()):
+            self.meta = self._meta
+            if self.meta().values() == [None] * len(self.meta().values()):
                 self._uses_meta = False
                 self.meta = None
         else:
@@ -53,9 +54,10 @@ class Quantity(object):
         self.x = link.x
         self.y = link.y
         self.w = weight if weight is not None else '@1'
+        self.is_weighted = False
         self.type = self._get_type()
         if self.type == 'nested':
-            self.nest_def = Nest(self.y, self.d, self.meta).nest()
+            self.nest_def = Nest(self.y, self.d(), self.meta()).nest()
         self._squeezed = False
         self.idx_map = None
         self.xdef = self.ydef = None
@@ -81,17 +83,29 @@ class Quantity(object):
     # -------------------------------------------------
     # Matrix creation and retrievel
     # -------------------------------------------------
+    def _convert_to_dataset(self, link):
+        ds = qp.DataSet('')
+        ds._data = link.stack[link.data_key].data
+        ds._meta = link.get_meta()
+        return ds
+
+    def _data(self):
+        return self.ds._data
+
+    def _meta(self):
+        return self.ds._meta
+
     def _get_type(self):
         """
         Test variable type that can be "simple", "nested" or "array".
         """
         if self._uses_meta:
             masks = [self.x, self.y]
-            if any(mask in self.meta['masks'].keys() for mask in masks):
+            if any(mask in self.meta()['masks'].keys() for mask in masks):
                 mask = {
                     True: self.x,
-                    False: self.y}.get(self.x in self.meta['masks'].keys())
-                if self.meta['masks'][mask]['type'] == 'array':
+                    False: self.y}.get(self.x in self.meta()['masks'].keys())
+                if self.meta()['masks'][mask]['type'] == 'array':
                     if self.x == '@':
                         self.x, self.y = self.y, self.x
                     return 'array'
@@ -103,19 +117,24 @@ class Quantity(object):
             return 'simple'
 
     def _is_multicode_array(self, mask_element):
-        return self.d[mask_element].dtype == 'object'
+        return self.d()[mask_element].dtype == 'object'
 
     def _get_wv(self):
         """
         Returns the weight vector of the matrix.
         """
-        return self.d[[self.w]].values
+        return self.d()[[self.w]].values
 
     def weight(self):
         """
         Weight by multiplying the indicator entries with the weight vector.
         """
-        self.matrix *=  np.atleast_3d(self.wv)
+        self.matrix *= np.atleast_3d(self.wv)
+        # if self.is_weighted:
+        #     self.matrix[:, 1:, 1:] *=  np.atleast_3d(self.wv)
+        # else:
+        #     self.matrix *= np.atleast_3d(self.wv)
+        # self.is_weighted = True
         return None
 
     def unweight(self):
@@ -123,13 +142,15 @@ class Quantity(object):
         Remove any weighting by dividing the matrix by itself.
         """
         self.matrix /= self.matrix
+        # self.matrix[:, 1:, 1:] /= self.matrix[:, 1:, 1:]
+        # self.is_weighted = False
         return None
 
     def _get_total(self):
         """
         Return a vector of 1s for the matrix.
         """
-        return self.d[['@1']].values
+        return self.d()[['@1']].values
 
     def _copy(self):
         """
@@ -146,10 +167,10 @@ class Quantity(object):
         Query the meta specified codes values for a meta-using Quantity.
         """
         if self.type == 'array':
-            rescodes = [v['value'] for v in self.meta['lib']['values'][var]]
+            rescodes = [v['value'] for v in self.meta()['lib']['values'][var]]
         else:
             values = emulate_meta(
-                self.meta, self.meta['columns'][var].get('values', None))
+                self.meta(), self.meta()['columns'][var].get('values', None))
             rescodes = [v['value'] for v in values]
         return rescodes
 
@@ -159,10 +180,10 @@ class Quantity(object):
         """
         if text_key is None: text_key = 'main'
         if self.type == 'array':
-            restexts = [v[text_key] for v in self.meta['lib']['values'][var]]
+            restexts = [v[text_key] for v in self.meta()['lib']['values'][var]]
         else:
             values = emulate_meta(
-                self.meta, self.meta['columns'][var].get('values', None))
+                self.meta(), self.meta()['columns'][var].get('values', None))
             restexts = [v['text'][text_key] for v in values]
         return restexts
 
@@ -299,7 +320,7 @@ class Quantity(object):
         else:
             column = condition.keys()[0]
             logic = condition.values()[0]
-        idx, logical_expression = get_logic_index(self.d[column], logic, self.d)
+        idx, logical_expression = get_logic_index(self.d()[column], logic, self.d())
         logical_expression = logical_expression.split(':')[0]
         if not column == self.x:
             logical_expression = logical_expression.replace('x[', column+'[')
@@ -366,9 +387,6 @@ class Quantity(object):
                                          axis=1, keepdims=True)
                         mask /= mask
                         mask = mask > 0
-                        # mask = np.nansum(np.sum(missingfied.matrix,
-                        #                         axis=1, keepdims=True),
-                        #                  axis=1, keepdims=True) > 0
                     else:
                         mask = np.nansum(np.sum(missingfied.matrix,
                                                 axis=1, keepdims=False),
@@ -378,11 +396,48 @@ class Quantity(object):
                     missingfied._switch_axes()
             if inplace:
                 self.matrix = missingfied.matrix
+                if indices:
+                    return mis_ix
             else:
                 if indices:
                     return missingfied, mis_ix
                 else:
                     return missingfied
+
+    def _organize_missings(self, missings):
+        hidden = [c for c in missings.keys() if missings[c] == 'hidden']
+        excluded = [c for c in missings.keys()
+                    if missings[c] in ['excluded', 'f.excluded']]
+        shown = [c for c in missings.keys() if missings[c] == 'shown']
+        return hidden, excluded, shown
+
+    def _clean_from_missings(self):
+        if self.x == '@':
+            pass
+        elif self.ds._has_missings(self.x):
+            missings = self.ds._get_missings(self.x)
+            hidden, excluded, shown = self._organize_missings(missings)
+            if excluded:
+                excluded_codes = excluded
+                excluded_idxer = self._missingfy(excluded, keep_base=False,
+                                                 indices=True)
+            else:
+                excluded_codes, excluded_idxer = [], []
+            if hidden:
+                hidden_codes = hidden
+                hidden_idxer = self._get_drop_idx(hidden, keep=False)
+                hidden_idxer = [code + 1 for code in hidden_idxer]
+            else:
+                hidden_codes, hidden_idxer = [], []
+            dropped_codes = excluded_codes + hidden_codes
+            dropped_codes_idxer = excluded_idxer + hidden_idxer
+            self._x_indexers = [x_idx for x_idx in self._x_indexers
+                                if x_idx not in dropped_codes_idxer]
+            self.matrix = self.matrix[:, [0] + self._x_indexers]
+            self.xdef = [x_c for x_c in self.xdef if x_c not in dropped_codes]
+        else:
+            pass
+        return None
 
     def _get_drop_idx(self, codes, keep):
         """
@@ -1265,13 +1320,14 @@ class Quantity(object):
         self.matrix = self.matrix[self._dataidx]
         self.matrix = self._clean()
         self._squeeze_dummies()
+        self._clean_from_missings()
         return self.matrix
 
     def _dummyfy(self, section=None):
         if section is not None:
             # i.e. Quantipy multicode data
-            if self.d[section].dtype == 'object':
-                section_data = self.d[section].str.get_dummies(';')
+            if self.d()[section].dtype == 'object':
+                section_data = self.d()[section].str.get_dummies(';')
                 if self._uses_meta:
                     res_codes = self._get_response_codes(section)
                     section_data.columns = [int(col) for col in section_data.columns]
@@ -1281,7 +1337,7 @@ class Quantity(object):
                     section_data.sort_index(axis=1, inplace=True)
             # i.e. Quantipy single-coded/numerical data
             else:
-                section_data = pd.get_dummies(self.d[section])
+                section_data = pd.get_dummies(self.d()[section])
                 if self._uses_meta and not self._is_raw_numeric(section):
                     res_codes = self._get_response_codes(section)
                     section_data = section_data.reindex(columns=res_codes)
@@ -1297,17 +1353,17 @@ class Quantity(object):
             return section_data.values, section_data.columns.tolist()
         elif section is None and self.type == 'array':
             a_i = [i['source'].split('@')[-1] for i in
-                   self.meta['masks'][self.x]['items']]
+                   self.meta()['masks'][self.x]['items']]
             a_res = self._get_response_codes(self.x)
             dummies = []
             if self._is_multicode_array(a_i[0]):
                 for i in a_i:
-                    i_dummy = self.d[i].str.get_dummies(';')
+                    i_dummy = self.d()[i].str.get_dummies(';')
                     i_dummy.columns = [int(col) for col in i_dummy.columns]
                     dummies.append(i_dummy.reindex(columns=a_res))
             else:
                 for i in a_i:
-                    dummies.append(pd.get_dummies(self.d[i]).reindex(columns=a_res))
+                    dummies.append(pd.get_dummies(self.d()[i]).reindex(columns=a_res))
             a_data = pd.concat(dummies, axis=1)
             return a_data.values, a_res, a_i
 
@@ -1338,7 +1394,7 @@ class Quantity(object):
             return mat[mask]
 
     def _is_raw_numeric(self, var):
-        return self.meta['columns'][var]['type'] in ['int', 'float']
+        return self.meta()['columns'][var]['type'] in ['int', 'float']
 
     def _res_from_count(self):
         return self._res_is_margin() or self.current_agg == 'freq'
