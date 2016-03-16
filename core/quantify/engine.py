@@ -404,23 +404,11 @@ class Quantity(object):
                 else:
                     return missingfied
 
-    def _organize_global_missings(self, missings):
-        hidden = [c for c in missings.keys() if missings[c] == 'hidden']
-        excluded = [c for c in missings.keys() if missings[c] == 'excluded']
-        shown = [c for c in missings.keys() if missings[c] == 'shown']
-        return hidden, excluded, shown
-
-    def _organize_stats_missings(self, missings):
-        excluded = [c for c in missings.keys()
-                    if missings[c] in ['d.excluded', 'excluded']]
-        return excluded
-
     def _autodrop_stats_missings(self):
         if self.x == '@':
             pass
         elif self.ds._has_missings(self.x):
-            missings = self.ds._get_missings(self.x)
-            to_drop = self._organize_stats_missings(missings)
+            to_drop = self.ds._get_missing_list(self.x, globally=False)
             self.exclude(to_drop)
         else:
             pass
@@ -430,26 +418,14 @@ class Quantity(object):
         if self.x == '@':
             pass
         elif self.ds._has_missings(self.x):
-            missings = self.ds._get_missings(self.x)
-            hidden, excluded, shown = self._organize_global_missings(missings)
-            if excluded:
-                excluded_codes = excluded
-                excluded_idxer = self._missingfy(excluded, keep_base=False,
-                                                 indices=True)
-            else:
-                excluded_codes, excluded_idxer = [], []
-            if hidden:
-                hidden_codes = hidden
-                hidden_idxer = self._get_drop_idx(hidden, keep=False)
-                hidden_idxer = [code + 1 for code in hidden_idxer]
-            else:
-                hidden_codes, hidden_idxer = [], []
-            dropped_codes = excluded_codes + hidden_codes
-            dropped_codes_idxer = excluded_idxer + hidden_idxer
+            excluded = self.ds._get_missing_list(self.x, globally=True)
+            excluded_codes = excluded
+            excluded_idxer = self._missingfy(excluded, keep_base=False,
+                                             indices=True)
             self._x_indexers = [x_idx for x_idx in self._x_indexers
-                                if x_idx not in dropped_codes_idxer]
+                                if x_idx not in excluded_idxer]
             self.matrix = self.matrix[:, [0] + self._x_indexers]
-            self.xdef = [x_c for x_c in self.xdef if x_c not in dropped_codes]
+            self.xdef = [x_c for x_c in self.xdef if x_c not in excluded_codes]
         else:
             pass
         return None

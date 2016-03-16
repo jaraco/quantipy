@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 import quantipy as qp
 from matplotlib import pyplot as plt
+import matplotlib.image as mpimg
 import seaborn as sns
+from PIL import Image
 
 from quantipy.core.cache import Cache
 from quantipy.core.view import View
@@ -2277,7 +2279,16 @@ class StatAlgos(object):
         self.x = x
         self.y = y
         self._analysisdata = self.ds[data_slice]
+        self._drop_missings()
 
+    def _drop_missings(self):
+        data = self._analysisdata.copy()
+        for var in data.columns:
+            if self.ds._has_missings(var):
+                drop = self.ds._get_missing_list(var, globally=False)
+                data[var].replace(drop, np.NaN, inplace=True)
+        self._analysisdata = data
+        return None
 
     def _has_analysis_data(self):
         if not hasattr(self, '_analysisdata'):
@@ -2286,7 +2297,7 @@ class StatAlgos(object):
     def _has_yvar(self):
         if self.y is None:
             raise AttributeError('Must select at least one y-variable or '
-                                 'matrix indicator!')
+                                 '"@"-matrix indicator!')
 
     def _get_quantities(self, weight=None, create='all'):
         crossed_quantities = []
@@ -2300,7 +2311,8 @@ class StatAlgos(object):
         for x, y, in product(self.x, self.y):
             l = helper_stack[self.ds.name]['no_filter'][x][y]
             crossed_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
-        for var in self.x + self.y:
+        single_vars = self.x if self.x == self.y else self.x + self.y
+        for var in single_vars:
             l = helper_stack[self.ds.name]['no_filter'][var]['@']
             single_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
         return single_quantities, crossed_quantities
@@ -2311,7 +2323,7 @@ class StatAlgos(object):
 
 class Association(StatAlgos):
     """
-    STAT DESCP
+    COV, CORR, SCATTER
     """
     def __init__(self, dataset):
         self.ds = dataset
@@ -2322,15 +2334,18 @@ class Association(StatAlgos):
         return self.x == self.y
 
     def _make_index_pairs(self):
-        full_range = len(self.x + self.y) - 1
+        if self._has_matrix_structure():
+            full_range = len(self.x) - 1
+        else:
+            full_range = len(self.x + self.y) - 1
         x_range = range(0, len(self.x))
         y_range = range(x_range[-1] + 1, full_range + 1)
         if self._has_matrix_structure():
-            return list(product(range(0, full_range), repeat=2))
+            return list(product(range(0, full_range+1), repeat=2))
         else:
             return list(product(x_range, y_range))
 
-    def corr(self, weight=None, n=True):
+    def corr(self, weight=None, n=True, pairwise_exclude=True):
         self._has_analysis_data()
         self._has_yvar()
         cov, n = self.cov(weight)
@@ -2339,17 +2354,44 @@ class Association(StatAlgos):
                   for q in self.single_quantities]
         normalizer = [stddev[ix1] * stddev[ix2] for ix1, ix2 in pairs]
         corrs = cov / normalizer
-        corr_df = pd.DataFrame(corrs)
+        corr_df = pd.DataFrame(corrs.reshape(len(self.x), len(self.y)))
         corr_df.index = self.x
         corr_df.columns = self.y
-
+        if len(self.y) == 1: corr_df = corr_df.T
+        plt.figure(figsize=(3+len(self.x), 3+len(self.y)))
         colors = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
         corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
                                square=True, robust=True, cmap=colors,
                                center=np.mean(corr_df.values), linewidth=0.5)
         fig = corr_res.get_figure()
-        fig.suptitle('Correlation matrix\n(Pearson)')
-        fig.savefig(self.ds.path + 'corr.png')
+
+        logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
+        if self._has_matrix_structure:
+            label_vars = self.x
+        else:
+            label_vars = self.x + self.y
+
+        print fig.get_axes()[0].get_position()
+        old = fig.get_axes()[0].get_position()
+        x0 = fig.get_axes()[0].get_position().x0
+        y0 = fig.get_axes()[0].get_position().y0
+        x1 = fig.get_axes()[0].get_position().x1
+        y1 = fig.get_axes()[0].get_position().y1
+        text = 'Correlation matrix (Pearson)\n\n'
+        # fig.text(x1 + 0.02, 0.59, text, fontsize=11, verticalalignment='center',
+        #          bbox={'facecolor':'red', 'alpha': 0.65, 'edgecolor': 'w', 'pad': 10})
+        # text = ''
+        for pos, var in enumerate(label_vars):
+            if pos == len(label_vars)-1:
+                text += '{}: {}'.format(var, self.ds._get_label(var))
+            else:
+                text += '{}: {}'.format(var, self.ds._get_label(var) + '\n')
+        fig.text(x1 + 0.02, 0.5, text, fontsize=11, verticalalignment='center',
+                 bbox={'facecolor':'lightgrey', 'alpha': 0.3, 'edgecolor': 'w', 'pad': 10})
+        newax = fig.add_axes([0.7, 0.8, 0.59, 0.1], anchor='NW', zorder=-1)
+        newax.imshow(logo)
+        newax.axis('off')
+        fig.savefig(self.ds.path + 'corr.png', bbox_inches='tight')
         # plt.show()
 
     def cov(self, weight=None):
@@ -2377,34 +2419,6 @@ class Association(StatAlgos):
         paired_n = [n + 1 for n in unbiased_n]
         return cov, paired_n
 
-
-
-    def _cov(self, x, y, w=None, n=False, as_df=True):
-            """
-            Compute the sample covariance (matrix).
-            """
-            self._prepare_analysis('covariance', x, y, w)
-            full_matrix = self._show_full_matrix()
-            pairs = self._make_index_pairs()
-            d = self.analysis_data
-            means = [q.summarize('mean', margin=False, as_df=False).result[0, 0]
-                     for q in self.frequencies]
-            m_d = d - (means + [0.0])
-            unbiased_n = [np.nansum(d.ix[:, [ix1, ix2, -1]].dropna().ix[:, -1]) - 1
-                          for ix1, ix2 in pairs]
-            xprod = [np.nansum(m_d.ix[:, -1] *  m_d.ix[:, ix1] * m_d.ix[:, ix2])
-                     for ix1, ix2 in pairs]
-            cov = np.array(xprod) / unbiased_n
-            if n:
-                paired_n = [n + 1 for n in unbiased_n]
-            if as_df:
-                cov_result = self._format_result_df(self._format_output_pairs(cov))
-            else:
-                cov_result = self._format_output_pairs(cov)
-            if n:
-                return paired_n, cov_result
-            else:
-                return cov_result
 
 
 

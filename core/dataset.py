@@ -122,7 +122,7 @@ class DataSet(object):
             else:
                 self.meta()['columns'][v]['missings'] = missing_map
 
-    def _get_missings(self, var):
+    def _get_missing_map(self, var):
         if self._is_array(var):
             var = self._get_itemmap(var, non_mapped='items')
         else:
@@ -132,6 +132,14 @@ class DataSet(object):
                 return self.meta()['columns'][v]['missings']
             else:
                 return None
+
+    def _get_missing_list(self, var, globally=True):
+        missings = self._get_missing_map(var)
+        if globally:
+            return [c for c in missings.keys() if missings[c] == 'exclude']
+        else:
+            return [c for c in missings.keys()
+                    if missings[c] in ['d.exclude', 'exclude']]
 
     def describe(self, var=None, restrict_to=None, text_key=None):
         """
@@ -245,7 +253,7 @@ class DataSet(object):
         if text_key is None: text_key = self._tk
         var_type = self._get_type(var)
         label = self._get_label(var, text_key)
-        missings = self._get_missings(var)
+        missings = self._get_missing_map(var)
         if not self._is_numeric(var):
             codes, texts = self._get_valuemap(var, non_mapped='lists')
             if missings:
@@ -337,7 +345,7 @@ class DataSet(object):
         data = self.make_dummy(var)
         is_array = self._is_array(var)
         if ignore:
-            if ignore == 'meta': ignore = self._get_missings(var).keys()
+            if ignore == 'meta': ignore = self._get_missing_map(var).keys()
             if is_array:
                 ignore = [col for col in data.columns for i in ignore
                           if col.endswith(str(i))]
