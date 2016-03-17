@@ -2451,12 +2451,6 @@ class Reduction(StatAlgos):
                  bbox={'facecolor':'lightgrey', 'alpha': 0.65,
                        'edgecolor': 'w', 'pad': 10})
 
-        # label_vars = self.x + self.y
-        # for pos, var in enumerate(label_vars):
-        #     text += '\n{}: {}\n'.format(var, self.ds._get_valuemap(var, non_mapped='texts'))
-        # fig.text(x1+0.02, 0.5, text, fontsize=45, verticalalignment='center',
-        #          bbox={'facecolor':'lightgrey', 'alpha': 0.65,
-        #                'edgecolor': 'w', 'pad': 10})
         text = '\nCorrespondence map'
         plt.figtext(x0+0.037, y1+0.08, text, fontsize=55, color='w',
                     fontweight='bold', verticalalignment='center',
