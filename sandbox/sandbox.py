@@ -2261,23 +2261,35 @@ class StatAlgos(object):
         pass
 
     def select_variables(self, x, y=None):
-        if self.ds._is_array(x):
-            x = self.ds._get_itemmap(x, non_mapped='items')
-        elif not isinstance(x, list):
-            x = [x]
-        if y is not None and not y == '@':
-            if self.ds._is_array(y):
-                y = self.ds._get_itemmap(y, non_mapped='items')
-            elif not isinstance(y, list):
-                y = [y]
+        x_vars, y_vars = [], []
+        if not isinstance(x, list): x = [x]
+        if not isinstance(y, list) and not y=='@': y = [y]
+        wrong_var_sel_1_on_1 = 'Can only analyze 1-to-1 relationships.'
+        if self.analysis == 'Reduction' and not (len(x) == 1 and len(y) == 1) or y=='@':
+            raise AttributeError(wrong_var_sel_1_on_1)
+        for var in x:
+            if self.ds._is_array(var):
+                if self.analysis == 'Reduction': raise AttributeError(wrong_var_sel_1_on_1)
+                x_a_items = self.ds._get_itemmap(var, non_mapped='items')
+                x_vars += x_a_items
+            else:
+                x_vars.append(var)
+        if y and not y == '@':
+            for var in y:
+                if self.ds._is_array(var):
+                    if self.analysis == 'Reduction': raise AttributeError(wrong_var_sel_1_on_1)
+                    y_a_items = self.ds._get_itemmap(var, non_mapped='items')
+                    y_vars += y_a_items
+                else:
+                    y_vars.append(var)
         elif y == '@':
-            y = x
-        if x == y or y is None:
-            data_slice = x
+            y_vars = x_vars
+        if x_vars == y_vars or y is None:
+            data_slice = x_vars
         else:
-            data_slice = x + y
-        self.x = x
-        self.y = y
+            data_slice = x_vars + y_vars
+        self.x = x_vars
+        self.y = y_vars
         self._analysisdata = self.ds[data_slice]
         self._drop_missings()
 
@@ -2315,10 +2327,139 @@ class StatAlgos(object):
         for var in single_vars:
             l = helper_stack[self.ds.name]['no_filter'][var]['@']
             single_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
-        return single_quantities, crossed_quantities
+        if self.analysis == 'Reduction':
+            return single_quantities[0], crossed_quantities[0]
+        else:
+            return single_quantities, crossed_quantities
 
 
+#     def correspondence(self, x, y, w=None, norm='sym', summary=True, plot=False):
+#         """
+#         Perform a (multiple) correspondence analysis.
 
+#         Parameters
+#         ----------
+#         norm : {'sym', 'princ'}, default 'sym'
+#             <DESCP>
+#         summary : bool, default True
+#             If True, the output will contain a dataframe that summarizes core
+#             information about the Inertia decomposition.
+#         plot : bool, default False
+#             If set to True, a correspondence map plot will be saved in the
+#             Stack's data path location.
+#         Returns
+#         -------
+#         results: pd.DataFrame
+#             Summary of analysis results.
+#         """
+#         self._prepare_analysis('correspondence', x, y, w)
+#         # 1. Chi^2 analysis
+#         obs, exp = self.expected_counts(x=x, y=y, return_observed=True)
+#         chisq = self.chi_sq(x=x, y=y)
+#         inertia = chisq / np.nansum(obs)
+#         # 2. svd on standardized residuals
+#         std_residuals = ((obs - exp) / np.sqrt(exp)) / np.sqrt(np.nansum(obs))
+#         sv, row_eigen_mat, col_eigen_mat, ev = self._svd(std_residuals)
+#         # 3. row and column coordinates
+#         a = 0.5 if norm == 'sym' else 1.0
+#         row_mass = self.mass(x=x, y=y, margin='x')
+#         col_mass = self.mass(x=x, y=y, margin='y')
+#         dim = min(row_mass.shape[0]-1, col_mass.shape[0]-1)
+#         row_sc = (row_eigen_mat * sv[:, 0] ** a) / np.sqrt(row_mass)
+#         col_sc = (col_eigen_mat.T * sv[:, 0] ** a) / np.sqrt(col_mass)
+#         if plot:
+#             # prep coordinates for plot
+#             item_sep = len(self.frequencies[0].xdef)
+#             dim1_c = [r_s[0] for r_s in row_sc] + [c_s[0] for c_s in col_sc]
+#             dim2_c = [r_s[1] for r_s in row_sc] + [c_s[1] for c_s in col_sc]
+#             dim1_xitem, dim2_xitem = dim1_c[:item_sep+1], dim2_c[:item_sep+1]
+#             dim1_yitem, dim2_yitem = dim1_c[item_sep:], dim2_c[item_sep:]
+#             coords = {'x': [dim1_xitem, dim2_xitem],
+#                       'y': [dim1_yitem, dim2_yitem]}
+#             self.plot('CA', coords)
+#         if summary:
+#             # core results summary table
+#             _dim = xrange(1, dim+1)
+#             _chisq = ([np.NaN] * (dim-1)) + [chisq]
+#             _sv, _ev = sv[:dim, 0], ev[:dim, 0]
+#             _expl_inertia = 100 * (ev[:dim, 0] / inertia)
+#             _cumul_expl_inertia = np.cumsum(_expl_inertia)
+#             _perc_chisq = _expl_inertia / 100 * chisq
+#             labels = ['Dimension', 'Total Chi^2', 'Singular values', 'Eigen values',
+#                      'explained % of Inertia', 'cumulative % explained',
+#                      'explained Chi^2']
+#             results = pd.DataFrame([_dim, _chisq, _sv, _ev, _expl_inertia,
+#                                     _cumul_expl_inertia,_perc_chisq]).T
+#             results.columns = labels
+#             results.set_index('Dimension', inplace=True)
+#             return results
+
+#     def _svd(self, matrix, return_eigen_matrices=True, return_eigen=True):
+#         """
+#         Singular value decomposition wrapping np.linalg.svd().
+#         """
+#         u, s, v = np.linalg.svd(matrix, full_matrices=False)
+#         s = s[:, None]
+#         if not return_eigen:
+#             if return_eigen_matrices:
+#                 return s, u, v
+#             else:
+#                 return s
+#         else:
+#             if return_eigen_matrices:
+#                 return s, u, v, (s ** 2)
+#             else:
+#                 return s, (s ** 2)
+
+class Reduction(StatAlgos):
+    def __init__(self, dataset):
+        self.ds = dataset
+        self.single_quantities = None
+        self.crossed_quantities = None
+        self.analysis = 'Reduction'
+
+    def expected_counts(self, x, y, w=None, return_observed=False):
+        """
+        Compute expected cell distribution given observed absolute frequencies.
+        """
+        _, self.crossed_quantities = self._get_quantities()
+        counts = self.crossed_quantities.count(margin=False)
+        total = counts.cbase[0, 0]
+        row_m = counts.rbase[1:, :]
+        col_m = counts.cbase[:, 1:]
+        if not return_observed:
+            return (row_m * col_m) / total
+        else:
+            return counts.result.values, (row_m * col_m) / total
+
+    def chi_sq(self, x, y, w=None, as_inertia=False):
+        """
+        Compute global Chi^2 statistic, optionally transformed into Inertia.
+        """
+        obs, exp = self.expected_counts(x=x, y=y, return_observed=True)
+        diff_matrix = ((obs - exp)**2) / exp
+        total_chi_sq = np.nansum(diff_matrix)
+        if not as_inertia:
+            return total_chi_sq
+        else:
+            return total_chi_sq / np.nansum(obs)
+
+    def _svd(self, matrix, return_eigen_matrices=True, return_eigen=True):
+        """
+        Singular value decomposition wrapping np.linalg.svd().
+        """
+        u, s, v = np.linalg.svd(matrix, full_matrices=False)
+        s = s[:, None]
+        if not return_eigen:
+            if return_eigen_matrices:
+                return s, u, v
+            else:
+                return s
+        else:
+            if return_eigen_matrices:
+                return s, u, v, (s ** 2)
+            else:
+                return s, (s ** 2)
 
 
 class Association(StatAlgos):
@@ -2357,42 +2498,46 @@ class Association(StatAlgos):
         corr_df = pd.DataFrame(corrs.reshape(len(self.x), len(self.y)))
         corr_df.index = self.x
         corr_df.columns = self.y
+
         if len(self.y) == 1: corr_df = corr_df.T
-        plt.figure(figsize=(3+len(self.x), 3+len(self.y)))
+        plt.figure(figsize=(30, 30), dpi=300)
         colors = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
         corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
                                square=True, robust=True, cmap=colors,
-                               center=np.mean(corr_df.values), linewidth=0.5)
+                               center=np.mean(corr_df.values), linewidth=10.0,
+                               annot_kws={'size': 45, 'weight': 'bold'})
         fig = corr_res.get_figure()
-
+        fig.get_axes()[0].tick_params(labelsize=45)
         logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
-        if self._has_matrix_structure:
+        if self._has_matrix_structure():
             label_vars = self.x
         else:
             label_vars = self.x + self.y
 
-        print fig.get_axes()[0].get_position()
-        old = fig.get_axes()[0].get_position()
         x0 = fig.get_axes()[0].get_position().x0
         y0 = fig.get_axes()[0].get_position().y0
         x1 = fig.get_axes()[0].get_position().x1
         y1 = fig.get_axes()[0].get_position().y1
-        text = 'Correlation matrix (Pearson)\n\n'
-        # fig.text(x1 + 0.02, 0.59, text, fontsize=11, verticalalignment='center',
-        #          bbox={'facecolor':'red', 'alpha': 0.65, 'edgecolor': 'w', 'pad': 10})
-        # text = ''
+
+        text = ''
         for pos, var in enumerate(label_vars):
-            if pos == len(label_vars)-1:
-                text += '{}: {}'.format(var, self.ds._get_label(var))
-            else:
-                text += '{}: {}'.format(var, self.ds._get_label(var) + '\n')
-        fig.text(x1 + 0.02, 0.5, text, fontsize=11, verticalalignment='center',
-                 bbox={'facecolor':'lightgrey', 'alpha': 0.3, 'edgecolor': 'w', 'pad': 10})
-        newax = fig.add_axes([0.7, 0.8, 0.59, 0.1], anchor='NW', zorder=-1)
+            text += '\n{}: {}\n'.format(var, self.ds._get_label(var))
+        fig.text(x1+0.02, 0.5, text, fontsize=45, verticalalignment='center',
+                 bbox={'facecolor':'lightgrey', 'alpha': 0.65,
+                       'edgecolor': 'w', 'pad': 10})
+
+        text = '\nCorrelation matrix (Pearson)'
+        plt.figtext(x0+0.037, y1+0.08, text, fontsize=55, color='w',
+                    fontweight='bold', verticalalignment='center',
+                    bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
+                          'pad': 150})
+
+        newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
         newax.imshow(logo)
         newax.axis('off')
         fig.savefig(self.ds.path + 'corr.png', bbox_inches='tight')
-        # plt.show()
+        plt.show()
+
 
     def cov(self, weight=None):
         if weight is None:
