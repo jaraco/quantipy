@@ -2418,11 +2418,157 @@ class Reduction(StatAlgos):
         self.crossed_quantities = None
         self.analysis = 'Reduction'
 
+    def plot(self, type, point_coords):
+        plt.set_autoscale_on = False
+        plt.figure(figsize=(30, 30))
+        # if type == 'CA':
+        #     plt.suptitle('Correspondence map\n(Symmetrical biplot)',
+        #                  fontsize=11)
+        plt.xlim([-1, 1])
+        plt.ylim([-1, 1])
+        plt.axvline(x=0.0, c='grey', ls='solid', linewidth=0.9)
+        plt.axhline(y=0.0, c='grey', ls='solid', linewidth=0.9)
+        x = plt.scatter(point_coords['x'][0], point_coords['x'][1],
+                        edgecolor='w', marker='o', c='red', s=1280)
+        y = plt.scatter(point_coords['y'][0], point_coords['y'][1],
+                        edgecolor='w', marker='o', c='0.65', s=1280)
+
+        fig = x.get_figure()
+        fig.get_axes()[0].tick_params(labelsize=45)
+        x0 = fig.get_axes()[0].get_position().x0
+        y0 = fig.get_axes()[0].get_position().y0
+        x1 = fig.get_axes()[0].get_position().x1
+        y1 = fig.get_axes()[0].get_position().y1
+
+        text = ''
+        x_codes, x_texts = self.ds._get_valuemap(self.x[0], non_mapped='lists')
+        y_codes, y_texts = self.ds._get_valuemap(self.y[0], non_mapped='lists')
+        x_codes += y_codes
+        x_texts += y_texts
+        for pos, var in enumerate(zip(x_codes, x_texts)):
+            text += '\n{}: {}\n'.format(var[0], var[1])
+        fig.text(x1+0.02, 0.5, text, fontsize=45, verticalalignment='center',
+                 bbox={'facecolor':'lightgrey', 'alpha': 0.65,
+                       'edgecolor': 'w', 'pad': 10})
+
+        # label_vars = self.x + self.y
+        # for pos, var in enumerate(label_vars):
+        #     text += '\n{}: {}\n'.format(var, self.ds._get_valuemap(var, non_mapped='texts'))
+        # fig.text(x1+0.02, 0.5, text, fontsize=45, verticalalignment='center',
+        #          bbox={'facecolor':'lightgrey', 'alpha': 0.65,
+        #                'edgecolor': 'w', 'pad': 10})
+        text = '\nCorrespondence map'
+        plt.figtext(x0+0.037, y1+0.08, text, fontsize=55, color='w',
+                    fontweight='bold', verticalalignment='center',
+                    bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
+                          'pad': 150})
+        logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
+
+        newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
+        newax.imshow(logo)
+        newax.axis('off')
+
+        # label_map = self._get_point_label_map('CA', point_coords)
+        # for axis in label_map.keys():
+        #     for lab, coord in label_map[axis].items():
+        #         plt.annotate(lab, coord, ha = 'left', va = 'bottom',
+        #             fontsize=10)
+            # plt.legend((x, y), (self.x[0], self.y[0]),
+            #            loc='upper center', bbox_to_anchor=(0.5, -0.01),
+            #            ncol=2, fontsize=10, title='_________________________')
+
+#             plt.savefig('C:/Users/alt/Desktop/Bugs and testing/MENA CA/corresp.png')
+
+    def correspondence(self, x, y, w=None, norm='sym', summary=True, plot=True):
+        """
+        Perform a (multiple) correspondence analysis.
+
+        Parameters
+        ----------
+        norm : {'sym', 'princ'}, default 'sym'
+            <DESCP>
+        summary : bool, default True
+            If True, the output will contain a dataframe that summarizes core
+            information about the Inertia decomposition.
+        plot : bool, default False
+            If set to True, a correspondence map plot will be saved in the
+            Stack's data path location.
+        Returns
+        -------
+        results: pd.DataFrame
+            Summary of analysis results.
+        """
+        # 1. Chi^2 analysis
+        obs, exp = self.expected_counts(x=x, y=y, return_observed=True)
+        chisq = self.chi_sq(x=x, y=y)
+        inertia = chisq / np.nansum(obs)
+        # 2. svd on standardized residuals
+        std_residuals = ((obs - exp) / np.sqrt(exp)) / np.sqrt(np.nansum(obs))
+        sv, row_eigen_mat, col_eigen_mat, ev = self._svd(std_residuals)
+        # 3. row and column coordinates
+        a = 0.5 if norm == 'sym' else 1.0
+        row_mass = self.mass(x=x, y=y, margin='x')
+        col_mass = self.mass(x=x, y=y, margin='y')
+        dim = min(row_mass.shape[0]-1, col_mass.shape[0]-1)
+        row_sc = (row_eigen_mat * sv[:, 0] ** a) / np.sqrt(row_mass)
+        col_sc = (col_eigen_mat.T * sv[:, 0] ** a) / np.sqrt(col_mass)
+        if plot:
+            # prep coordinates for plot
+            item_sep = len(self.single_quantities.xdef)
+            dim1_c = [r_s[0] for r_s in row_sc] + [c_s[0] for c_s in col_sc]
+            dim2_c = [r_s[1] for r_s in row_sc] + [c_s[1] for c_s in col_sc]
+            dim1_xitem, dim2_xitem = dim1_c[:item_sep+1], dim2_c[:item_sep+1]
+            dim1_yitem, dim2_yitem = dim1_c[item_sep:], dim2_c[item_sep:]
+            coords = {'x': [dim1_xitem, dim2_xitem],
+                      'y': [dim1_yitem, dim2_yitem]}
+            self.plot('CA', coords)
+            plt.show()
+
+#         if summary:
+#             # core results summary table
+#             _dim = xrange(1, dim+1)
+#             _chisq = ([np.NaN] * (dim-1)) + [chisq]
+#             _sv, _ev = sv[:dim, 0], ev[:dim, 0]
+#             _expl_inertia = 100 * (ev[:dim, 0] / inertia)
+#             _cumul_expl_inertia = np.cumsum(_expl_inertia)
+#             _perc_chisq = _expl_inertia / 100 * chisq
+#             labels = ['Dimension', 'Total Chi^2', 'Singular values', 'Eigen values',
+#                      'explained % of Inertia', 'cumulative % explained',
+#                      'explained Chi^2']
+#             results = pd.DataFrame([_dim, _chisq, _sv, _ev, _expl_inertia,
+#                                     _cumul_expl_inertia,_perc_chisq]).T
+#             results.columns = labels
+#             results.set_index('Dimension', inplace=True)
+#             return results
+
+    def _get_point_label_map(self, type, point_coords):
+        if type == 'CA':
+            xcoords = zip(point_coords['x'][0],point_coords['x'][1])
+            xlabels = self.crossed_quantities.xdef
+            x_point_map = {lab: coord for lab, coord in zip(xlabels, xcoords)}
+            ycoords = zip(point_coords['y'][0], point_coords['y'][1])
+            ylabels = self.crossed_quantities.ydef
+            y_point_map = {lab: coord for lab, coord in zip(ylabels, ycoords)}
+            return {'x': x_point_map, 'y': y_point_map}
+
+    def mass(self, x, y, w=None, margin=None):
+        """
+        Compute rel. margins or total cell frequencies of a contigency table.
+        """
+        counts = self.crossed_quantities.count(margin=False)
+        total = counts.cbase[0, 0]
+        if margin is None:
+            return counts.result.values / total
+        elif margin == 'x':
+            return  counts.rbase[1:, :] / total
+        elif margin == 'y':
+            return  (counts.cbase[:, 1:] / total).T
+
     def expected_counts(self, x, y, w=None, return_observed=False):
         """
         Compute expected cell distribution given observed absolute frequencies.
         """
-        _, self.crossed_quantities = self._get_quantities()
+        self.single_quantities, self.crossed_quantities = self._get_quantities()
         counts = self.crossed_quantities.count(margin=False)
         total = counts.cbase[0, 0]
         row_m = counts.rbase[1:, :]
@@ -2531,6 +2677,7 @@ class Association(StatAlgos):
                     fontweight='bold', verticalalignment='center',
                     bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
                           'pad': 150})
+        logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
 
         newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
         newax.imshow(logo)
