@@ -2265,7 +2265,7 @@ class StatAlgos(object):
         if not isinstance(x, list): x = [x]
         if not isinstance(y, list) and not y=='@': y = [y]
         wrong_var_sel_1_on_1 = 'Can only analyze 1-to-1 relationships.'
-        if self.analysis == 'Reduction' and not (len(x) == 1 and len(y) == 1) or y=='@':
+        if self.analysis == 'Reduction' and (not (len(x) == 1 and len(y) == 1) or y=='@'):
             raise AttributeError(wrong_var_sel_1_on_1)
         for var in x:
             if self.ds._is_array(var):
@@ -2435,20 +2435,29 @@ class Reduction(StatAlgos):
 
         fig = x.get_figure()
         fig.get_axes()[0].tick_params(labelsize=45)
+        fig.get_axes()[0].xaxis.get_major_ticks()[0].label1.set_visible(False)
         x0 = fig.get_axes()[0].get_position().x0
         y0 = fig.get_axes()[0].get_position().y0
         x1 = fig.get_axes()[0].get_position().x1
         y1 = fig.get_axes()[0].get_position().y1
 
-        text = ''
+
         x_codes, x_texts = self.ds._get_valuemap(self.x[0], non_mapped='lists')
         y_codes, y_texts = self.ds._get_valuemap(self.y[0], non_mapped='lists')
-        x_codes += y_codes
-        x_texts += y_texts
+        max_len = max(len(lab) for lab in x_texts + y_texts)
+        text = ' '*80
+        for pos, var in enumerate(zip(y_codes, y_texts)):
+            text += '\n{}: {}\n'.format(var[0], var[1])
+        fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='bottom',
+                 bbox={'facecolor':'0.65',
+                       'edgecolor': 'w', 'pad': 10})
+        text = ' '*80
+        x_codes, x_texts = self.ds._get_valuemap(self.x[0], non_mapped='lists')
+        y_codes, y_texts = self.ds._get_valuemap(self.y[0], non_mapped='lists')
         for pos, var in enumerate(zip(x_codes, x_texts)):
             text += '\n{}: {}\n'.format(var[0], var[1])
-        fig.text(x1+0.02, 0.5, text, fontsize=45, verticalalignment='center',
-                 bbox={'facecolor':'lightgrey', 'alpha': 0.65,
+        fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='top',
+                 bbox={'facecolor':'red',
                        'edgecolor': 'w', 'pad': 10})
 
         text = '\nCorrespondence map'
@@ -2458,20 +2467,21 @@ class Reduction(StatAlgos):
                           'pad': 150})
         logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
 
+
+
+        label_map = self._get_point_label_map('CA', point_coords)
+        for axis in label_map.keys():
+            for lab, coord in label_map[axis].items():
+                plt.annotate(lab, coord, ha = 'left', va = 'bottom',
+                    fontsize=45, weight='bold')
+            plt.legend((x, y), (self.x[0], self.y[0]),
+                       loc='upper center', bbox_to_anchor=(0.5, -0.01),
+                       ncol=2, fontsize=45, title='                         ')
+
         newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
         newax.imshow(logo)
         newax.axis('off')
-
-        # label_map = self._get_point_label_map('CA', point_coords)
-        # for axis in label_map.keys():
-        #     for lab, coord in label_map[axis].items():
-        #         plt.annotate(lab, coord, ha = 'left', va = 'bottom',
-        #             fontsize=10)
-            # plt.legend((x, y), (self.x[0], self.y[0]),
-            #            loc='upper center', bbox_to_anchor=(0.5, -0.01),
-            #            ncol=2, fontsize=10, title='_________________________')
-
-#             plt.savefig('C:/Users/alt/Desktop/Bugs and testing/MENA CA/corresp.png')
+        fig.savefig(self.ds.path + 'correspond.png', bbox_inches='tight')
 
     def correspondence(self, x, y, w=None, norm='sym', summary=True, plot=True):
         """
@@ -2610,6 +2620,7 @@ class Association(StatAlgos):
         self.ds = dataset
         self.single_quantities = None
         self.crossed_quantities = None
+        self.analysis = 'Association'
 
     def _has_matrix_structure(self):
         return self.x == self.y
@@ -2662,7 +2673,7 @@ class Association(StatAlgos):
         text = ''
         for pos, var in enumerate(label_vars):
             text += '\n{}: {}\n'.format(var, self.ds._get_label(var))
-        fig.text(x1+0.02, 0.5, text, fontsize=45, verticalalignment='center',
+        fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='center',
                  bbox={'facecolor':'lightgrey', 'alpha': 0.65,
                        'edgecolor': 'w', 'pad': 10})
 
@@ -2703,6 +2714,8 @@ class Association(StatAlgos):
                  for ix1, ix2 in pairs]
         cov = np.array(xprod) / unbiased_n
         paired_n = [n + 1 for n in unbiased_n]
+        print cov
+        print paired_n
         return cov, paired_n
 
 
