@@ -2260,10 +2260,11 @@ class StatAlgos(object):
     def __init__(self):
         pass
 
-    def select_variables(self, x, y=None):
+    def _select_variables(self, x, y=None, w=None, drop_listwise=False):
         x_vars, y_vars = [], []
         if not isinstance(x, list): x = [x]
         if not isinstance(y, list) and not y=='@': y = [y]
+        if w is None: w = '@1'
         wrong_var_sel_1_on_1 = 'Can only analyze 1-to-1 relationships.'
         if self.analysis == 'Reduction' and (not (len(x) == 1 and len(y) == 1) or y=='@'):
             raise AttributeError(wrong_var_sel_1_on_1)
@@ -2285,13 +2286,17 @@ class StatAlgos(object):
         elif y == '@':
             y_vars = x_vars
         if x_vars == y_vars or y is None:
-            data_slice = x_vars
+            data_slice = x_vars + [w]
         else:
-            data_slice = x_vars + y_vars
+            data_slice = x_vars + y_vars + [w]
         self.x = x_vars
         self.y = y_vars
+        self.w = w
         self._analysisdata = self.ds[data_slice]
         self._drop_missings()
+        if drop_listwise:
+            self._analysisdata.dropna(inplace=True)
+        return None
 
     def _drop_missings(self):
         data = self._analysisdata.copy()
@@ -2311,26 +2316,30 @@ class StatAlgos(object):
             raise AttributeError('Must select at least one y-variable or '
                                  '"@"-matrix indicator!')
 
-    def _get_quantities(self, weight=None, create='all'):
+    def _get_quantities(self, create='all'):
         crossed_quantities = []
         single_quantities = []
         helper_stack = qp.Stack()
         helper_stack.add_data(self.ds.name, self.ds._data, self.ds._meta)
+        w = self.w if self.w != '@1' else None
         for x, y in product(self.x, self.y):
             helper_stack.add_link(x=x, y=y)
-        for var in self.x + self.y:
-            helper_stack.add_link(x=var, y='@')
-        for x, y, in product(self.x, self.y):
+            helper_stack.add_link(x=x, y='@')
+            helper_stack.add_link(x=y, y='@')
             l = helper_stack[self.ds.name]['no_filter'][x][y]
-            crossed_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
-        single_vars = self.x if self.x == self.y else self.x + self.y
-        for var in single_vars:
-            l = helper_stack[self.ds.name]['no_filter'][var]['@']
-            single_quantities.append(qp.Quantity(l, weight=weight, use_meta=True))
-        if self.analysis == 'Reduction':
-            return single_quantities[0], crossed_quantities[0]
-        else:
-            return single_quantities, crossed_quantities
+            crossed_quantities.append(qp.Quantity(l, weight=w, use_meta=True))
+            l = helper_stack[self.ds.name]['no_filter'][x]['@']
+            single_quantities.append(qp.Quantity(l, weight=w, use_meta=True))
+            l = helper_stack[self.ds.name]['no_filter'][y]['@']
+            single_quantities.append(qp.Quantity(l, weight=w, use_meta=True))
+        self.single_quantities = single_quantities
+        self.crossed_quantities = crossed_quantities
+        return None
+
+        # if self.analysis == 'Reduction':
+        #     return single_quantities[0], crossed_quantities[0]
+        # else:
+        #     return single_quantities, crossed_quantities
 
 
 #     def correspondence(self, x, y, w=None, norm='sym', summary=True, plot=False):
@@ -2411,6 +2420,8 @@ class StatAlgos(object):
 #             else:
 #                 return s, (s ** 2)
 
+
+
 class Reduction(StatAlgos):
     def __init__(self, dataset):
         self.ds = dataset
@@ -2420,68 +2431,70 @@ class Reduction(StatAlgos):
 
     def plot(self, type, point_coords):
         plt.set_autoscale_on = False
-        plt.figure(figsize=(30, 30))
-        # if type == 'CA':
-        #     plt.suptitle('Correspondence map\n(Symmetrical biplot)',
-        #                  fontsize=11)
+        plt.figure(figsize=(5, 5))
         plt.xlim([-1, 1])
         plt.ylim([-1, 1])
-        plt.axvline(x=0.0, c='grey', ls='solid', linewidth=0.9)
-        plt.axhline(y=0.0, c='grey', ls='solid', linewidth=0.9)
+        #plt.axvline(x=0.0, c='grey', ls='solid', linewidth=0.9)
+        #plt.axhline(y=0.0, c='grey', ls='solid', linewidth=0.9)
         x = plt.scatter(point_coords['x'][0], point_coords['x'][1],
-                        edgecolor='w', marker='o', c='red', s=1280)
+                        edgecolor='w', marker='o', c='red', s=20)
         y = plt.scatter(point_coords['y'][0], point_coords['y'][1],
-                        edgecolor='w', marker='o', c='0.65', s=1280)
+                        edgecolor='k', marker='^', c='lightgrey', s=20)
 
         fig = x.get_figure()
-        fig.get_axes()[0].tick_params(labelsize=45)
+        # print fig.get_axes()[0].grid()
+        fig.get_axes()[0].tick_params(labelsize=6)
+        fig.get_axes()[0].patch.set_facecolor('w')
+
+        fig.get_axes()[0].grid(which='major', linestyle='solid', color='grey',
+                               linewidth=0.6)
+
         fig.get_axes()[0].xaxis.get_major_ticks()[0].label1.set_visible(False)
         x0 = fig.get_axes()[0].get_position().x0
         y0 = fig.get_axes()[0].get_position().y0
         x1 = fig.get_axes()[0].get_position().x1
         y1 = fig.get_axes()[0].get_position().y1
 
-
-        x_codes, x_texts = self.ds._get_valuemap(self.x[0], non_mapped='lists')
-        y_codes, y_texts = self.ds._get_valuemap(self.y[0], non_mapped='lists')
-        max_len = max(len(lab) for lab in x_texts + y_texts)
-        text = ' '*80
-        for pos, var in enumerate(zip(y_codes, y_texts)):
-            text += '\n{}: {}\n'.format(var[0], var[1])
-        fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='bottom',
-                 bbox={'facecolor':'0.65',
-                       'edgecolor': 'w', 'pad': 10})
-        text = ' '*80
-        x_codes, x_texts = self.ds._get_valuemap(self.x[0], non_mapped='lists')
-        y_codes, y_texts = self.ds._get_valuemap(self.y[0], non_mapped='lists')
-        for pos, var in enumerate(zip(x_codes, x_texts)):
-            text += '\n{}: {}\n'.format(var[0], var[1])
-        fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='top',
-                 bbox={'facecolor':'red',
-                       'edgecolor': 'w', 'pad': 10})
-
-        text = '\nCorrespondence map'
-        plt.figtext(x0+0.037, y1+0.08, text, fontsize=55, color='w',
-                    fontweight='bold', verticalalignment='center',
+        text = 'Correspondence map'
+        plt.figtext(x0+0.015, 1.09-y0, text, fontsize=12, color='w',
+                    fontweight='bold', verticalalignment='top',
                     bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
-                          'pad': 150})
-        logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
+                          'pad': 10})
 
 
 
         label_map = self._get_point_label_map('CA', point_coords)
         for axis in label_map.keys():
             for lab, coord in label_map[axis].items():
-                plt.annotate(lab, coord, ha = 'left', va = 'bottom',
-                    fontsize=45, weight='bold')
+                plt.annotate(lab, coord, ha='left', va='bottom',
+                    fontsize=6)
             plt.legend((x, y), (self.x[0], self.y[0]),
-                       loc='upper center', bbox_to_anchor=(0.5, -0.01),
-                       ncol=2, fontsize=45, title='                         ')
+                       loc='best', bbox_to_anchor=(1.325, 1.07),
+                       ncol=2, fontsize=6, title='                         ')
 
-        newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
+        x_codes, x_texts = self.ds._get_valuemap(self.x[0], non_mapped='lists')
+        y_codes, y_texts = self.ds._get_valuemap(self.y[0], non_mapped='lists')
+
+        text = ' '*80
+        for var in zip(x_codes, x_texts):
+            text += '\n{}: {}\n'.format(var[0], var[1])
+        fig.text(1.06-x0, 0.85, text, fontsize=5, verticalalignment='top',
+                          bbox={'facecolor':'red',
+                          'edgecolor': 'w', 'pad': 10})
+        x_len = len(x_codes)
+        text = ' '*80
+        for var in zip(y_codes, y_texts):
+            text += '\n{}: {}\n'.format(var[0], var[1])
+        test = fig.text(1.06-x0, 0.85-((x_len)*0.0155)-((x_len)*0.0155)-0.05, text, fontsize=5, verticalalignment='top',
+                          bbox={'facecolor': 'lightgrey', 'alpha': 0.65,
+                          'edgecolor': 'w', 'pad': 10})
+
+        logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
+        newax = fig.add_axes([x0+0.005, y0-0.25, 0.1, 0.1], anchor='NE', zorder=-1)
         newax.imshow(logo)
         newax.axis('off')
-        fig.savefig(self.ds.path + 'correspond.png', bbox_inches='tight')
+
+        fig.savefig(self.ds.path + 'correspond.png', bbox_inches='tight', dpi=300)
 
     def correspondence(self, x, y, w=None, norm='sym', summary=True, plot=True):
         """
@@ -2502,6 +2515,8 @@ class Reduction(StatAlgos):
         results: pd.DataFrame
             Summary of analysis results.
         """
+        self._select_variables(x, y, w)
+        self._get_quantities()
         # 1. Chi^2 analysis
         obs, exp = self.expected_counts(x=x, y=y, return_observed=True)
         chisq = self.chi_sq(x=x, y=y)
@@ -2518,10 +2533,10 @@ class Reduction(StatAlgos):
         col_sc = (col_eigen_mat.T * sv[:, 0] ** a) / np.sqrt(col_mass)
         if plot:
             # prep coordinates for plot
-            item_sep = len(self.single_quantities.xdef)
+            item_sep = len(self.single_quantities[0].xdef)
             dim1_c = [r_s[0] for r_s in row_sc] + [c_s[0] for c_s in col_sc]
             dim2_c = [r_s[1] for r_s in row_sc] + [c_s[1] for c_s in col_sc]
-            dim1_xitem, dim2_xitem = dim1_c[:item_sep+1], dim2_c[:item_sep+1]
+            dim1_xitem, dim2_xitem = dim1_c[:item_sep], dim2_c[:item_sep]
             dim1_yitem, dim2_yitem = dim1_c[item_sep:], dim2_c[item_sep:]
             coords = {'x': [dim1_xitem, dim2_xitem],
                       'y': [dim1_yitem, dim2_yitem]}
@@ -2548,10 +2563,10 @@ class Reduction(StatAlgos):
     def _get_point_label_map(self, type, point_coords):
         if type == 'CA':
             xcoords = zip(point_coords['x'][0],point_coords['x'][1])
-            xlabels = self.crossed_quantities.xdef
+            xlabels = self.crossed_quantities[0].xdef
             x_point_map = {lab: coord for lab, coord in zip(xlabels, xcoords)}
             ycoords = zip(point_coords['y'][0], point_coords['y'][1])
-            ylabels = self.crossed_quantities.ydef
+            ylabels = self.crossed_quantities[0].ydef
             y_point_map = {lab: coord for lab, coord in zip(ylabels, ycoords)}
             return {'x': x_point_map, 'y': y_point_map}
 
@@ -2559,7 +2574,7 @@ class Reduction(StatAlgos):
         """
         Compute rel. margins or total cell frequencies of a contigency table.
         """
-        counts = self.crossed_quantities.count(margin=False)
+        counts = self.crossed_quantities[0].count(margin=False)
         total = counts.cbase[0, 0]
         if margin is None:
             return counts.result.values / total
@@ -2572,8 +2587,8 @@ class Reduction(StatAlgos):
         """
         Compute expected cell distribution given observed absolute frequencies.
         """
-        self.single_quantities, self.crossed_quantities = self._get_quantities()
-        counts = self.crossed_quantities.count(margin=False)
+        #self.single_quantities, self.crossed_quantities = self._get_quantities()
+        counts = self.crossed_quantities[0].count(margin=False)
         total = counts.cbase[0, 0]
         row_m = counts.rbase[1:, :]
         col_m = counts.cbase[:, 1:]
@@ -2611,6 +2626,22 @@ class Reduction(StatAlgos):
             else:
                 return s, (s ** 2)
 
+class OLS(StatAlgos):
+    """
+    OLS REGRESSION, ...
+    """
+    def __init__(self, dataset):
+        self.ds = dataset
+        self.single_quantities = None
+        self.crossed_quantities = None
+        self.analysis = 'OLS'
+
+    def test(self, y, x):
+        corr = Association(self.ds).cov(x+[y], '@')
+        return corr
+
+
+
 
 class Association(StatAlgos):
     """
@@ -2637,87 +2668,135 @@ class Association(StatAlgos):
         else:
             return list(product(x_range, y_range))
 
-    def corr(self, weight=None, n=True, pairwise_exclude=True):
+    def _sort_as_paired_stats(self, stat_list, pair_list):
+        pairs = {pair: stat for pair, stat in zip(pair_list, stat_list)}
+        if self._has_matrix_structure():
+            return [(pairs[p[0], p[1]], pairs[p[1], p[0]]) for p in pair_list]
+        else:
+            return [(pairs[p[0], p[1]], pairs[p[0], p[1]]) for p in pair_list]
+
+    def cov(self, x, y, w=None, n=False, drop_listwise=False):
+        self._select_variables(x, y, w, drop_listwise)
+        if self.single_quantities is None: self._get_quantities()
+        pairs = self._make_index_pairs()
+        means = [q.summarize('mean', as_df=False).result[0, 0]
+                 for q in self.crossed_quantities]
+        means_paired = self._sort_as_paired_stats(means, pairs)
+        xprods, unbiased_ns = [], []
+        for pair, means_pair in zip(pairs, means_paired):
+            data = self._analysisdata.copy()
+            data = data.ix[:, [pair[0], pair[1], -1]].dropna().values
+            m_diff = data[:, :-1] - means_pair
+            xprods.append(np.nansum(m_diff[:, 0] * m_diff[:, 1] * data[:, -1]))
+            unbiased_ns.append(np.nansum(data[:, -1]) - 1)
+        cov = np.array(xprods) / np.array(unbiased_ns)
+        if n:
+            paired_ns = [n + 1 for n in unbiased_ns]
+
+        cov = pd.DataFrame(cov.reshape(len(self.x), len(self.y)),
+                           index=self.x, columns=self.y)
+        cov.index.name = 'Covariance'
+        return cov
+        # if n:
+
+        #     return cov, paired_ns
+        # else:
+        #     return cov
+
+    def corr(self, x, y, w=None, n=False, drop_listwise=False):
+        self._select_variables(x, y, w, drop_listwise)
         self._has_analysis_data()
         self._has_yvar()
-        cov, n = self.cov(weight)
+        cov = self.cov(x, y, w, n, drop_listwise)
         pairs = self._make_index_pairs()
-        stddev = [q.summarize('stddev', margin=False, as_df=False).result[0, 0]
-                  for q in self.single_quantities]
-        normalizer = [stddev[ix1] * stddev[ix2] for ix1, ix2 in pairs]
-        corrs = cov / normalizer
-        corr_df = pd.DataFrame(corrs.reshape(len(self.x), len(self.y)))
-        corr_df.index = self.x
-        corr_df.columns = self.y
+        stddev = [q.summarize('stddev', as_df=False).result[0, 0]
+                  for q in self.crossed_quantities]
+        stddev_paired = self._sort_as_paired_stats(stddev, pairs)
+        normalizer = [stddev1 * stddev2 for stddev1, stddev2 in stddev_paired]
+        corr = cov / np.array(normalizer).reshape(cov.shape)
+        return corr
+        # --------------------------------------------------------------------
+        # CODE IS RUNABLE!
+        corr.index.name = 'Correlation'
 
-        if len(self.y) == 1: corr_df = corr_df.T
-        plt.figure(figsize=(30, 30), dpi=300)
-        colors = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
-        corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
+        corr.index.name = None
+        colors = sns.blend_palette(['lightgrey', 'red'], as_cmap=True,
+                                   n_colors=400)
+        corr_res = sns.heatmap(corr, annot=True, cbar=None, fmt='.2f',
                                square=True, robust=True, cmap=colors,
-                               center=np.mean(corr_df.values), linewidth=10.0,
-                               annot_kws={'size': 45, 'weight': 'bold'})
-        fig = corr_res.get_figure()
-        fig.get_axes()[0].tick_params(labelsize=45)
-        logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
-        if self._has_matrix_structure():
-            label_vars = self.x
-        else:
-            label_vars = self.x + self.y
+                               center=np.mean(corr.values), linewidth=1.0,
+                               annot_kws={'size': 8})
 
+
+        fig = corr_res.get_figure()
         x0 = fig.get_axes()[0].get_position().x0
         y0 = fig.get_axes()[0].get_position().y0
         x1 = fig.get_axes()[0].get_position().x1
         y1 = fig.get_axes()[0].get_position().y1
 
+        text = 'Correlation matrix (Pearson)'
+        plt.figtext(x0+0.017, 1.115-y0, text, fontsize=12, color='w',
+                    fontweight='bold', verticalalignment='top',
+                    bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
+                          'pad': 10})
+        if self._has_matrix_structure():
+            label_vars = self.x
+        else:
+            label_vars = self.x + self.y
         text = ''
-        for pos, var in enumerate(label_vars):
+        for var in label_vars:
             text += '\n{}: {}\n'.format(var, self.ds._get_label(var))
-        fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='center',
+        fig.text(1.06-x0, 1.0-y0, text, fontsize=6, verticalalignment='top',
                  bbox={'facecolor':'lightgrey', 'alpha': 0.65,
                        'edgecolor': 'w', 'pad': 10})
-
-        text = '\nCorrelation matrix (Pearson)'
-        plt.figtext(x0+0.037, y1+0.08, text, fontsize=55, color='w',
-                    fontweight='bold', verticalalignment='center',
-                    bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
-                          'pad': 150})
         logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
-
-        newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
+        newax = fig.add_axes([x0+0.005, y0-0.25, 0.1, 0.1], anchor='NE', zorder=-1)
         newax.imshow(logo)
         newax.axis('off')
-        fig.savefig(self.ds.path + 'corr.png', bbox_inches='tight')
-        plt.show()
+        fig.savefig(self.ds.path + 'corr.png', bbox_inches='tight', dpi=300)
+        # --------------------------------------------------------------------
 
 
-    def cov(self, weight=None):
-        if weight is None:
-            w = '@1'
-        else:
-            w = weight
-        if self.single_quantities is None:
-            self.single_quantities, _ = self._get_quantities(weight)
-        means = [q.summarize('mean', margin=False, as_df=False).result[0, 0]
-                 for q in self.single_quantities]
-        data = self._analysisdata.copy()
-        data = pd.concat([data, self.ds[[w]]], axis=1)
-        mean_diff_data = data - (means + [0.0])
-        pairs = self._make_index_pairs()
-        unbiased_n = [np.nansum(
-                        data.ix[:, [ix1, ix2, -1]].dropna().ix[:, -1]) - 1
-                      for ix1, ix2 in pairs]
-        xprod = [np.nansum(
-                    (mean_diff_data.ix[:, -1] *
-                     mean_diff_data.ix[:, ix1] *
-                     mean_diff_data.ix[:, ix2]))
-                 for ix1, ix2 in pairs]
-        cov = np.array(xprod) / unbiased_n
-        paired_n = [n + 1 for n in unbiased_n]
-        print cov
-        print paired_n
-        return cov, paired_n
 
+        # if len(self.y) == 1: corr_df = corr_df.T
+        # plt.figure(figsize=(30, 30), dpi=300)
+        # colors = sns.blend_palette(["lightgrey", "red"], as_cmap=True)
+        # corr_res = sns.heatmap(corr_df, annot=True, cbar=None, fmt='.2f',
+        #                        square=True, robust=True, cmap=colors,
+        #                        center=np.mean(corr_df.values), linewidth=10.0,
+        #                        annot_kws={'size': 45, 'weight': 'bold'})
+        # fig = corr_res.get_figure()
+        # fig.get_axes()[0].tick_params(labelsize=45)
+        # # logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
+        # if self._has_matrix_structure():
+        #     label_vars = self.x
+        # else:
+        #     label_vars = self.x + self.y
+
+        # x0 = fig.get_axes()[0].get_position().x0
+        # y0 = fig.get_axes()[0].get_position().y0
+        # x1 = fig.get_axes()[0].get_position().x1
+        # y1 = fig.get_axes()[0].get_position().y1
+
+        # text = ''
+        # for pos, var in enumerate(label_vars):
+        #     text += '\n{}: {}\n'.format(var, self.ds._get_label(var))
+        # fig.text(x1+0.02, 0.5, text, fontsize=30, verticalalignment='center',
+        #          bbox={'facecolor':'lightgrey', 'alpha': 0.65,
+        #                'edgecolor': 'w', 'pad': 10})
+
+        # text = '\nCorrelation matrix (Pearson)'
+        # plt.figtext(x0+0.037, y1+0.08, text, fontsize=55, color='w',
+        #             fontweight='bold', verticalalignment='center',
+        #             bbox={'facecolor':'red', 'alpha': 0.8, 'edgecolor': 'w',
+        #                   'pad': 150})
+        # # logo = Image.open('C:/Users/alt/Documents/IPython Notebooks/Designs/Multivariate class/__resources__/YG_logo.png')
+
+        # # newax = fig.add_axes([x0+0.005, 0.8-y1, 0.1, 0.1], anchor='NE')
+        # # newax.imshow(logo)
+        # # newax.axis('off')
+        # fig.savefig(self.ds.path + 'corr.png', bbox_inches='tight')
+        # plt.show()
 
 
 

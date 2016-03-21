@@ -68,6 +68,7 @@ class DataSet(object):
         else:
             self._tk = None
         self._data['@1'] = np.ones(len(self._data))
+        self._meta['columns']['@1'] = {'type': 'int'}
         self._data.index = list(xrange(0, len(self._data.index)))
         return None
 
