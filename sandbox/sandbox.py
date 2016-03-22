@@ -2636,12 +2636,29 @@ class OLS(StatAlgos):
         self.crossed_quantities = None
         self.analysis = 'OLS'
 
-    def test(self, y, x):
+    def reg(self, y, x, w):
         corr = Association(self.ds).cov(x+[y], '@')
-        return corr
+        mat = self.ds[[y] + x + [y]].dropna().values
+        w_ = mat[:, [-1]]
+        y_ = mat[:, [0]]
+        x_ = mat[:, 1:-1]
+        x_ = np.concatenate([np.ones((x_.shape[0], 1)), x_], axis=1)
+        solved = np.dot(np.linalg.inv(np.dot(x_.T,x_)),np.dot(x_.T,y_))
+        hat = x_.dot(np.dot(np.linalg.inv(np.dot(x_.T,x_)), x_.T))
+        res_ss = y_.T.dot(np.dot(np.eye(hat.shape[0])-hat, y_))
 
+        pred = pd.DataFrame(solved)
+        pred.index = ['constant'] + x
+        pred.columns = ['coeffcients']
 
+        y_mean = np.array(y_.mean())
+        y_mean = np.full((y_.shape[0], 1), y_mean)
 
+        total_ss = y_.T.dot(y_) - 2*(y_.T.dot(y_mean)) + y_mean.T.dot(y_mean)
+        anova = pd.DataFrame(np.concatenate([total_ss, total_ss-res_ss, res_ss], axis=0))
+        anova.index = ['TSS', 'ESS', 'RSS']
+        anova.columns = ['ANOVA']
+        return pred, anova
 
 class Association(StatAlgos):
     """
