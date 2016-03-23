@@ -2638,27 +2638,38 @@ class OLS(StatAlgos):
 
     def reg(self, y, x, w):
         corr = Association(self.ds).cov(x+[y], '@')
-        self._select_variables(x=y, y=x, w=w)
+        self._select_variables(x=y, y=x, w=w, drop_listwise=True)
         self._get_quantities()
         y_mean =  self.single_quantities[0].summarize('mean', as_df=False).result[0,0]
         mat = self.ds[[y] + x + [w]].dropna().values
+
         w_ = mat[:, [-1]]
+        # w_ =  (w_ * w_.shape[0]*1/w_.sum())
         y_ = mat[:, [0]]
         x_ = mat[:, 1:-1]
         x_ = np.concatenate([np.ones((x_.shape[0], 1)), x_], axis=1)
         solved = np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)),np.dot(x_.T,y_*w_))
 
         hat = (x_*w_).dot(np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)), x_.T))
+
+
+
         res_ss = y_.T.dot(np.dot(np.eye(hat.shape[0])-hat, y_*w_))
 
         pred = pd.DataFrame(solved)
         pred.index = ['constant'] + x
         pred.columns = ['coeffcients']
 
-        y_mean = np.array(y_mean)
-        y_mean = np.full((y_.shape[0], 1), y_mean)
 
+
+
+        y_mean = np.array(y_mean)
+        # y_mean = np.array(5.660155)
+        # y_mean = y_.mean()
+        y_mean = np.full((y_.shape[0], 1), y_mean)
         total_ss = y_.T.dot(y_) - 2*(y_.T.dot(y_mean)) + y_mean.T.dot(y_mean)
+
+
         anova = pd.DataFrame(np.concatenate([total_ss, total_ss-res_ss, res_ss], axis=0))
         anova.index = ['TSS', 'ESS', 'RSS']
         anova.columns = ['ANOVA']
