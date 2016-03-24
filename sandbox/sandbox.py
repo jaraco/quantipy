@@ -2296,6 +2296,8 @@ class StatAlgos(object):
         self._drop_missings()
         if drop_listwise:
             self._analysisdata.dropna(inplace=True)
+            valid = self._analysisdata.index
+            self.ds._data = self.ds._data.ix[valid, :]
         return None
 
     def _drop_missings(self):
@@ -2636,44 +2638,49 @@ class OLS(StatAlgos):
         self.crossed_quantities = None
         self.analysis = 'OLS'
 
-    def reg(self, y, x, w):
-        corr = Association(self.ds).cov(x+[y], '@')
+    def reg(self, y, x, w, intercept=True):
+        corr = Association(self.ds).corr(x+[y], '@', w=w, drop_listwise=True).values
+        vals_1 = corr[:-1, :-1]
+        vals_2 = corr[:-1, [-1]]
+        vals_3 = np.linalg.inv(vals_1)
+        std_coeff = np.dot(vals_3, vals_2)
+        std_coeff = np.concatenate([np.full((1,1), np.nan), std_coeff], axis=0)
+
         self._select_variables(x=y, y=x, w=w, drop_listwise=True)
         self._get_quantities()
         y_mean =  self.single_quantities[0].summarize('mean', as_df=False).result[0,0]
         mat = self.ds[[y] + x + [w]].dropna().values
-
         w_ = mat[:, [-1]]
-        # w_ =  (w_ * w_.shape[0]*1/w_.sum())
         y_ = mat[:, [0]]
         x_ = mat[:, 1:-1]
         x_ = np.concatenate([np.ones((x_.shape[0], 1)), x_], axis=1)
         solved = np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)),np.dot(x_.T,y_*w_))
-
+        solved = np.concatenate([solved, std_coeff], axis=1)
         hat = (x_*w_).dot(np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)), x_.T))
+        tss  = (w_*(y_ - y_mean)**2).sum()[None]
+        rss = y_.T.dot(np.dot(np.eye(hat.shape[0])-hat, y_*w_))[0]
+        ess = tss-rss
 
-
-
-        res_ss = y_.T.dot(np.dot(np.eye(hat.shape[0])-hat, y_*w_))
-
-        pred = pd.DataFrame(solved)
-        pred.index = ['constant'] + x
-        pred.columns = ['coeffcients']
-
-
-
-
+        pred = pd.DataFrame(solved).replace(np.NaN, '')
+        pred.index = ['constant'] + x if intercept else x
+        pred.columns = ['B', 'betas']
         y_mean = np.array(y_mean)
-        # y_mean = np.array(5.660155)
-        # y_mean = y_.mean()
         y_mean = np.full((y_.shape[0], 1), y_mean)
-        total_ss = y_.T.dot(y_) - 2*(y_.T.dot(y_mean)) + y_mean.T.dot(y_mean)
 
 
-        anova = pd.DataFrame(np.concatenate([total_ss, total_ss-res_ss, res_ss], axis=0))
+        anova = np.concatenate([tss, ess, rss], axis=1)[None]
+        dofs = np.array([np.round(w_.sum()-1, 0), len(x), np.round(w_.sum()-len(x)-1, 1)])[None]
+        r_sq = np.concatenate([[np.NaN], ess/tss, [np.NaN]], axis=0)[None]
+        r = np.sqrt(r_sq)
+        anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r], axis=0).T).replace(np.NaN, '')
         anova.index = ['TSS', 'ESS', 'RSS']
-        anova.columns = ['ANOVA']
+        anova.columns = ['ANOVA (sum of squares)', 'dof', 'R^2', 'R']
         return pred, anova
+
+
+        # df = pred.append(anova).replace(np.NaN, '')
+        # print df
+        # return pred, anova
 
 class Association(StatAlgos):
     """
