@@ -2655,32 +2655,31 @@ class OLS(StatAlgos):
         x_ = mat[:, 1:-1]
         x_ = np.concatenate([np.ones((x_.shape[0], 1)), x_], axis=1)
         solved = np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)),np.dot(x_.T,y_*w_))
-        solved = np.concatenate([solved, std_coeff], axis=1)
+
         hat = (x_*w_).dot(np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)), x_.T))
         tss  = (w_*(y_ - y_mean)**2).sum()[None]
         rss = y_.T.dot(np.dot(np.eye(hat.shape[0])-hat, y_*w_))[0]
         ess = tss-rss
 
+        anova = np.concatenate([tss, ess, rss], axis=1)[None]
+        dofs = np.array([np.round(w_.sum()-1, 0), len(x), np.round(w_.sum()-len(x)-1, 0)])[None]
+        r_sq = np.concatenate([[np.NaN], ess/tss, [np.NaN]], axis=0)[None]
+        r = np.sqrt(r_sq)
+        fstat =  np.concatenate([[np.NaN], (ess/3) / (rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
+        model_se = np.concatenate([[np.NaN], np.sqrt(rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
+        c_se = np.diagonal(np.sqrt(np.linalg.inv(np.dot(x_.T,x_*w_))*(rss/(w_.sum()-len(x)-1))))[None].T
+        anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r, model_se, fstat], axis=0).T).replace(np.NaN, '')
+        anova.index = ['TSS', 'ESS', 'RSS']
+        anova.columns = ['ANOVA (sum of squares)', 'dof', 'R', 'R^2', 'SE', 'F-stat']
+
+        solved = np.concatenate([solved, c_se, std_coeff], axis=1)
         pred = pd.DataFrame(solved).replace(np.NaN, '')
         pred.index = ['constant'] + x if intercept else x
-        pred.columns = ['B', 'betas']
+        pred.columns = ['B', 'SE', 'betas']
         y_mean = np.array(y_mean)
         y_mean = np.full((y_.shape[0], 1), y_mean)
 
-
-        anova = np.concatenate([tss, ess, rss], axis=1)[None]
-        dofs = np.array([np.round(w_.sum()-1, 0), len(x), np.round(w_.sum()-len(x)-1, 1)])[None]
-        r_sq = np.concatenate([[np.NaN], ess/tss, [np.NaN]], axis=0)[None]
-        r = np.sqrt(r_sq)
-        anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r], axis=0).T).replace(np.NaN, '')
-        anova.index = ['TSS', 'ESS', 'RSS']
-        anova.columns = ['ANOVA (sum of squares)', 'dof', 'R^2', 'R']
         return pred, anova
-
-
-        # df = pred.append(anova).replace(np.NaN, '')
-        # print df
-        # return pred, anova
 
 class Association(StatAlgos):
     """
