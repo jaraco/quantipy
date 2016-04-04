@@ -2334,6 +2334,7 @@ class StatAlgos(object):
             single_quantities.append(qp.Quantity(l, weight=w, use_meta=True))
             l = helper_stack[self.ds.name]['no_filter'][y]['@']
             single_quantities.append(qp.Quantity(l, weight=w, use_meta=True))
+
         self.single_quantities = single_quantities
         self.crossed_quantities = crossed_quantities
         return None
@@ -2537,6 +2538,7 @@ class Reduction(StatAlgos):
             # prep coordinates for plot
             item_sep = len(self.single_quantities[0].xdef)
             dim1_c = [r_s[0] for r_s in row_sc] + [c_s[0] for c_s in col_sc]
+            # dim2_c = [r_s[1]*(-1) for r_s in row_sc] + [c_s[1]*(-1) for c_s in col_sc]
             dim2_c = [r_s[1] for r_s in row_sc] + [c_s[1] for c_s in col_sc]
             dim1_xitem, dim2_xitem = dim1_c[:item_sep], dim2_c[:item_sep]
             dim1_yitem, dim2_yitem = dim1_c[item_sep:], dim2_c[item_sep:]
@@ -2545,22 +2547,22 @@ class Reduction(StatAlgos):
             self.plot('CA', coords)
             plt.show()
 
-#         if summary:
-#             # core results summary table
-#             _dim = xrange(1, dim+1)
-#             _chisq = ([np.NaN] * (dim-1)) + [chisq]
-#             _sv, _ev = sv[:dim, 0], ev[:dim, 0]
-#             _expl_inertia = 100 * (ev[:dim, 0] / inertia)
-#             _cumul_expl_inertia = np.cumsum(_expl_inertia)
-#             _perc_chisq = _expl_inertia / 100 * chisq
-#             labels = ['Dimension', 'Total Chi^2', 'Singular values', 'Eigen values',
-#                      'explained % of Inertia', 'cumulative % explained',
-#                      'explained Chi^2']
-#             results = pd.DataFrame([_dim, _chisq, _sv, _ev, _expl_inertia,
-#                                     _cumul_expl_inertia,_perc_chisq]).T
-#             results.columns = labels
-#             results.set_index('Dimension', inplace=True)
-#             return results
+        # if summary:
+        #     # core results summary table
+        #     _dim = xrange(1, dim+1)
+        #     _chisq = ([np.NaN] * (dim-1)) + [chisq]
+        #     _sv, _ev = sv[:dim, 0], ev[:dim, 0]
+        #     _expl_inertia = 100 * (ev[:dim, 0] / inertia)
+        #     _cumul_expl_inertia = np.cumsum(_expl_inertia)
+        #     _perc_chisq = _expl_inertia / 100 * chisq
+        #     labels = ['Dimension', 'Total Chi^2', 'Singular values', 'Eigen values',
+        #              'explained % of Inertia', 'cumulative % explained',
+        #              'explained Chi^2']
+        #     results = pd.DataFrame([_dim, _chisq, _sv, _ev, _expl_inertia,
+        #                             _cumul_expl_inertia,_perc_chisq]).T
+        #     results.columns = labels
+        #     results.set_index('Dimension', inplace=True)
+        #     return results
 
     def _get_point_label_map(self, type, point_coords):
         if type == 'CA':
@@ -2672,10 +2674,12 @@ class OLS(StatAlgos):
         anova.index = ['TSS', 'ESS', 'RSS']
         anova.columns = ['ANOVA (sum of squares)', 'dof', 'R', 'R^2', 'SE', 'F-stat']
 
+        sigs = np.concatenate(get_pval(dofs[:, -1], solved/c_se), axis=1)
         solved = np.concatenate([solved, c_se, std_coeff], axis=1)
+        solved = np.concatenate([solved, np.round(sigs, 5)], axis=1)
         pred = pd.DataFrame(solved).replace(np.NaN, '')
         pred.index = ['constant'] + x if intercept else x
-        pred.columns = ['B', 'SE', 'betas']
+        pred.columns = ['B', 'SE', 'beta', 't-stat', 'p']
         y_mean = np.array(y_mean)
         y_mean = np.full((y_.shape[0], 1), y_mean)
 
@@ -2717,7 +2721,7 @@ class Association(StatAlgos):
         self._select_variables(x, y, w, drop_listwise)
         if self.single_quantities is None: self._get_quantities()
         pairs = self._make_index_pairs()
-        means = [q.summarize('mean', as_df=False).result[0, 0]
+        means = [q._drop_pairwise().summarize('mean', as_df=False).result[0, 0]
                  for q in self.crossed_quantities]
         means_paired = self._sort_as_paired_stats(means, pairs)
         xprods, unbiased_ns = [], []
@@ -2730,7 +2734,6 @@ class Association(StatAlgos):
         cov = np.array(xprods) / np.array(unbiased_ns)
         if n:
             paired_ns = [n + 1 for n in unbiased_ns]
-
         cov = pd.DataFrame(cov.reshape(len(self.x), len(self.y)),
                            index=self.x, columns=self.y)
         cov.index.name = 'Covariance'

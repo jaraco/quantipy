@@ -407,11 +407,9 @@ class Quantity(object):
     def _autodrop_stats_missings(self):
         if self.x == '@':
             pass
-        elif self.ds._has_missings(self.x):
+        if self.ds._has_missings(self.x):
             to_drop = self.ds._get_missing_list(self.x, globally=False)
             self.exclude(to_drop)
-        else:
-            pass
         return None
 
     def _clean_from_global_missings(self):
@@ -429,6 +427,12 @@ class Quantity(object):
         else:
             pass
         return None
+
+    def _drop_pairwise(self):
+        if self.ds._has_missings(self.y):
+            to_drop = self.ds._get_missing_list(self.y, globally=False)
+            self.exclude(to_drop, axis='y')
+        return self
 
     def _get_drop_idx(self, codes, keep):
         """
