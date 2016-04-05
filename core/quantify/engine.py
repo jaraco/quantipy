@@ -21,7 +21,6 @@ from quantipy.core.tools.dp.prep import recode
 import copy
 import time
 
-
 class Quantity(object):
     """
     The Quantity object is the main Quantipy aggregation engine.
@@ -97,7 +96,7 @@ class Quantity(object):
 
     def _get_type(self):
         """
-        Test variable type that can be "simple", "nested" or "array".
+        Test variable type that can be 'simple', 'nested' or 'array'.
         """
         if self._uses_meta:
             masks = [self.x, self.y]
@@ -115,9 +114,6 @@ class Quantity(object):
                 return 'simple'
         else:
             return 'simple'
-
-    def _is_multicode_array(self, mask_element):
-        return self.d()[mask_element].dtype == 'object'
 
     def _get_wv(self):
         """
@@ -161,31 +157,6 @@ class Quantity(object):
         c = copy.copy(self)
         c.matrix = m_copy
         return c
-
-    def _get_response_codes(self, var):
-        """
-        Query the meta specified codes values for a meta-using Quantity.
-        """
-        if self.type == 'array':
-            rescodes = [v['value'] for v in self.meta()['lib']['values'][var]]
-        else:
-            values = emulate_meta(
-                self.meta(), self.meta()['columns'][var].get('values', None))
-            rescodes = [v['value'] for v in values]
-        return rescodes
-
-    def _get_response_texts(self, var, text_key=None):
-        """
-        Query the meta specified text values for a meta-using Quantity.
-        """
-        if text_key is None: text_key = 'main'
-        if self.type == 'array':
-            restexts = [v[text_key] for v in self.meta()['lib']['values'][var]]
-        else:
-            values = emulate_meta(
-                self.meta(), self.meta()['columns'][var].get('values', None))
-            restexts = [v['text'][text_key] for v in values]
-        return restexts
 
     def _switch_axes(self):
         """
@@ -1271,16 +1242,6 @@ class Quantity(object):
             self.matrix = sects
             self._x_indexers = self._get_x_indexers()
             self._y_indexers = self._get_y_indexers()
-        #=====================================================================
-        #THIS CAN SPEED UP PERFOMANCE BY A GOOD AMOUNT BUT STACK-SAVING
-        #TIME & SIZE WILL SUFFER. WE CAN DEL THE "SQUEEZED" COLLECTION AT
-        #SAVE STAGE.
-        #=====================================================================
-        # self._cache.set_obj(collection='squeezed',
-        #                     key=self.f+self.w+self.x+self.y,
-        #                     obj=(self.xdef, self.ydef,
-        #                          self._x_indexers, self._y_indexers,
-        #                          self.wv, self.matrix, self.idx_map))
 
     def _get_matrix(self):
         wv = self._cache.get_obj('weight_vectors', self.w)
@@ -1292,25 +1253,25 @@ class Quantity(object):
             total = self._get_total()
             self._cache.set_obj('weight_vectors', '@1', total)
         if self.type == 'array':
-            xm, self.xdef, self.ydef = self._dummyfy()
+            xm, self.xdef, self.ydef = self.ds.make_dummy(self.x, True)
             self.matrix = np.concatenate((xm, wv), 1)
         else:
             if self.y == '@' or self.x == '@':
                 section = self.x if self.y == '@' else self.y
                 xm, self.xdef = self._cache.get_obj('matrices', section)
                 if xm is None:
-                    xm, self.xdef = self._dummyfy(section)
+                    xm, self.xdef = self.ds.make_dummy(section, True)
                     self._cache.set_obj('matrices', section, (xm, self.xdef))
                 self.ydef = None
                 self.matrix = np.concatenate((total, xm, total, wv), 1)
             else:
                 xm, self.xdef = self._cache.get_obj('matrices', self.x)
                 if xm is None:
-                    xm, self.xdef = self._dummyfy(self.x)
+                    xm, self.xdef = self.ds.make_dummy(self.x, True)
                     self._cache.set_obj('matrices', self.x, (xm, self.xdef))
                 ym, self.ydef = self._cache.get_obj('matrices', self.y)
                 if ym is None:
-                    ym, self.ydef = self._dummyfy(self.y)
+                    ym, self.ydef = self.ds.make_dummy(self.y, True)
                     self._cache.set_obj('matrices', self.y, (ym, self.ydef))
                 self.matrix = np.concatenate((total, xm, total, ym, wv), 1)
         self.matrix = self.matrix[self._dataidx]
@@ -1318,50 +1279,6 @@ class Quantity(object):
         self._squeeze_dummies()
         self._clean_from_global_missings()
         return self.matrix
-
-    def _dummyfy(self, section=None):
-        if section is not None:
-            # i.e. Quantipy multicode data
-            if self.d()[section].dtype == 'object':
-                section_data = self.d()[section].str.get_dummies(';')
-                if self._uses_meta:
-                    res_codes = self._get_response_codes(section)
-                    section_data.columns = [int(col) for col in section_data.columns]
-                    section_data = section_data.reindex(columns=res_codes)
-                    section_data.replace(np.NaN, 0, inplace=True)
-                if not self._uses_meta:
-                    section_data.sort_index(axis=1, inplace=True)
-            # i.e. Quantipy single-coded/numerical data
-            else:
-                section_data = pd.get_dummies(self.d()[section])
-                if self._uses_meta and not self._is_raw_numeric(section):
-                    res_codes = self._get_response_codes(section)
-                    section_data = section_data.reindex(columns=res_codes)
-                    section_data.replace(np.NaN, 0, inplace=True)
-                section_data.rename(
-                    columns={
-                        col: int(col)
-                        if float(col).is_integer()
-                        else col
-                        for col in section_data.columns
-                    },
-                    inplace=True)
-            return section_data.values, section_data.columns.tolist()
-        elif section is None and self.type == 'array':
-            a_i = [i['source'].split('@')[-1] for i in
-                   self.meta()['masks'][self.x]['items']]
-            a_res = self._get_response_codes(self.x)
-            dummies = []
-            if self._is_multicode_array(a_i[0]):
-                for i in a_i:
-                    i_dummy = self.d()[i].str.get_dummies(';')
-                    i_dummy.columns = [int(col) for col in i_dummy.columns]
-                    dummies.append(i_dummy.reindex(columns=a_res))
-            else:
-                for i in a_i:
-                    dummies.append(pd.get_dummies(self.d()[i]).reindex(columns=a_res))
-            a_data = pd.concat(dummies, axis=1)
-            return a_data.values, a_res, a_i
 
     def _clean(self):
         """
@@ -1388,9 +1305,6 @@ class Quantity(object):
             self.idx_map = np.concatenate(
                 [np.expand_dims(mask, 1), mat_indexer], axis=1)
             return mat[mask]
-
-    def _is_raw_numeric(self, var):
-        return self.meta()['columns'][var]['type'] in ['int', 'float']
 
     def _res_from_count(self):
         return self._res_is_margin() or self.current_agg == 'freq'

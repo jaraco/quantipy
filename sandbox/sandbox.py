@@ -2256,7 +2256,7 @@ class Nest(object):
 
 ##############################################################################
 
-class StatAlgos(object):
+class Multivariate(object):
     def __init__(self):
         pass
 
@@ -2425,7 +2425,7 @@ class StatAlgos(object):
 
 
 
-class Reduction(StatAlgos):
+class Reductions(Multivariate):
     def __init__(self, dataset):
         self.ds = dataset
         self.single_quantities = None
@@ -2630,7 +2630,7 @@ class Reduction(StatAlgos):
             else:
                 return s, (s ** 2)
 
-class OLS(StatAlgos):
+class LinearModels(Multivariate):
     """
     OLS REGRESSION, ...
     """
@@ -2638,54 +2638,87 @@ class OLS(StatAlgos):
         self.ds = dataset
         self.single_quantities = None
         self.crossed_quantities = None
-        self.analysis = 'OLS'
+        self.analysis = 'LinearModels'
 
-    def reg(self, y, x, w, intercept=True):
-        corr = Association(self.ds).corr(x+[y], '@', w=w, drop_listwise=True).values
-        vals_1 = corr[:-1, :-1]
-        vals_2 = corr[:-1, [-1]]
-        vals_3 = np.linalg.inv(vals_1)
-        std_coeff = np.dot(vals_3, vals_2)
-        std_coeff = np.concatenate([np.full((1,1), np.nan), std_coeff], axis=0)
-
-        self._select_variables(x=y, y=x, w=w, drop_listwise=True)
+    def set_model(self, y, x, w=None):
+        self._select_variables(x=x, y=y, w=w, drop_listwise=True)
         self._get_quantities()
-        y_mean =  self.single_quantities[0].summarize('mean', as_df=False).result[0,0]
-        mat = self.ds[[y] + x + [w]].dropna().values
-        w_ = mat[:, [-1]]
-        y_ = mat[:, [0]]
-        x_ = mat[:, 1:-1]
-        x_ = np.concatenate([np.ones((x_.shape[0], 1)), x_], axis=1)
-        solved = np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)),np.dot(x_.T,y_*w_))
+        self._matrix = self.ds[self.y + self.x + [self.w]].dropna().values
+        ymean = self.single_quantities[0].summarize('mean', as_df=False).result[0, 0]
+        self._ymean = ymean
+        return None
 
-        hat = (x_*w_).dot(np.dot(np.linalg.inv(np.dot(x_.T,x_*w_)), x_.T))
-        tss  = (w_*(y_ - y_mean)**2).sum()[None]
-        rss = y_.T.dot(np.dot(np.eye(hat.shape[0])-hat, y_*w_))[0]
+    def _get_vectors(self):
+        w = self._matrix[:, [-1]]
+        y = self._matrix[:, [0]]
+        x = self._matrix[:, 1:-1]
+        x = np.concatenate([np.ones((x.shape[0], 1)), x], axis=1)
+        return w, y, x
+
+    def get_betas(self):
+        corr_mat = Relations(self.ds).corr(self.x+self.y, '@', self.w, True)
+        corr_mat = corr_mat.values
+        predictors = corr_mat[:-1, :-1]
+        y = corr_mat[:-1, [-1]]
+        inv_predictors = np.linalg.inv(predictors)
+        betas = np.dot(inv_predictors, y)
+        return betas[:, 0]
+
+    def get_coefs(self, intercept=True):
+        w, y, x = self._get_vectors()
+        coefs = np.dot(np.linalg.inv(np.dot(x.T, x*w)), np.dot(x.T, y*w))
+        return coefs
+
+    def get_squares(self):
+        w, y, x = self._get_vectors()
+        hat = (x*w).dot(np.dot(np.linalg.inv(np.dot(x.T, x*w)), x.T))
+        tss  = (w*(y - self._ymean)**2).sum()[None]
+        rss = y.T.dot(np.dot(np.eye(hat.shape[0])-hat, y*w))[0]
         ess = tss-rss
+        return np.concatenate([tss, ess, rss], axis=1)[None]
 
-        anova = np.concatenate([tss, ess, rss], axis=1)[None]
-        dofs = np.array([np.round(w_.sum()-1, 0), len(x), np.round(w_.sum()-len(x)-1, 0)])[None]
-        r_sq = np.concatenate([[np.NaN], ess/tss, [np.NaN]], axis=0)[None]
-        r = np.sqrt(r_sq)
-        fstat =  np.concatenate([[np.NaN], (ess/3) / (rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
-        model_se = np.concatenate([[np.NaN], np.sqrt(rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
-        c_se = np.diagonal(np.sqrt(np.linalg.inv(np.dot(x_.T,x_*w_))*(rss/(w_.sum()-len(x)-1))))[None].T
-        anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r, model_se, fstat], axis=0).T).replace(np.NaN, '')
-        anova.index = ['total', 'model', 'residual']
-        anova.columns = ['anova (sum of squares)', 'dof', 'R', 'R^2', 'se', 'F-stat']
+    def fit(self, intercept=True, estimator='ols'):
+        # get standardized coefficients (betas)
+        betas = self.get_betas()[None].T
+        betas = np.concatenate([np.full((1, 1), np.nan), betas], axis=0)
+        # get regular coefficients
+        coefs = self.get_coefs(intercept=intercept)
+        # get sum of squares
+        anova = self.get_squares()
+        print betas
+        print coefs
+        print anova
 
-        sigs = np.concatenate(get_pval(dofs[:, -1], solved/c_se), axis=1)
-        solved = np.concatenate([solved, np.round(sigs, 5), c_se, std_coeff], axis=1)
-        # solved = np.concatenate([solved, ], axis=1)
-        pred = pd.DataFrame(solved).replace(np.NaN, '')
-        pred.index = ['constant'] + x if intercept else x
-        pred.columns = ['b', 'se', 't-stat', 'p', 'beta']
-        y_mean = np.array(y_mean)
-        y_mean = np.full((y_.shape[0], 1), y_mean)
 
-        return pred, anova
 
-class Association(StatAlgos):
+        # self._select_variables(x=y, y=x, w=w, drop_listwise=True)
+        # self._get_quantities()
+
+
+
+        # anova = np.concatenate([tss, ess, rss], axis=1)[None]
+        # dofs = np.array([np.round(w_.sum()-1, 0), len(x), np.round(w_.sum()-len(x)-1, 0)])[None]
+        # r_sq = np.concatenate([[np.NaN], ess/tss, [np.NaN]], axis=0)[None]
+        # r = np.sqrt(r_sq)
+        # fstat =  np.concatenate([[np.NaN], (ess/3) / (rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
+        # model_se = np.concatenate([[np.NaN], np.sqrt(rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
+        # c_se = np.diagonal(np.sqrt(np.linalg.inv(np.dot(x_.T,x_*w_))*(rss/(w_.sum()-len(x)-1))))[None].T
+        # anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r, model_se, fstat], axis=0).T).replace(np.NaN, '')
+        # anova.index = ['total', 'model', 'residual']
+        # anova.columns = ['anova (sum of squares)', 'dof', 'R', 'R^2', 'se', 'F-stat']
+
+        # sigs = np.concatenate(get_pval(dofs[:, -1], solved/c_se), axis=1)
+        # solved = np.concatenate([solved, np.round(sigs, 5), c_se, std_coeff], axis=1)
+        # # solved = np.concatenate([solved, ], axis=1)
+        # pred = pd.DataFrame(solved).replace(np.NaN, '')
+        # pred.index = ['constant'] + x if intercept else x
+        # pred.columns = ['b', 'se', 't-stat', 'p', 'beta']
+        # y_mean = np.array(y_mean)
+        # y_mean = np.full((y_.shape[0], 1), y_mean)
+
+        # return pred, anova
+
+class Relations(Multivariate):
     """
     COV, CORR, SCATTER
     """
@@ -2693,7 +2726,7 @@ class Association(StatAlgos):
         self.ds = dataset
         self.single_quantities = None
         self.crossed_quantities = None
-        self.analysis = 'Association'
+        self.analysis = 'Relations'
 
     def _has_matrix_structure(self):
         return self.x == self.y

@@ -95,8 +95,9 @@ class DataSet(object):
         ----------
         var : str or list of str
             Variable(s) to apply the meta flags to.
-        missing_map: dict of code: flag or tuple of codes: flag
-            DESC
+        missing_map: dict of {code: 'flag'} or {(tuple of codes): 'flag'}
+            A mapping of codes to flags that can either be 'exclude' (globally
+            ignored) or 'd.exclude' (only ignored in descriptive statistics).
 
         Returns
         -------
@@ -122,6 +123,17 @@ class DataSet(object):
                 self.meta()['columns'][v].update({'missings': missing_map})
             else:
                 self.meta()['columns'][v]['missings'] = missing_map
+        return None
+
+    def slice(self, var, slicer):
+        values = self._get_value_loc(var)
+        new_values = [value for i in slicer for value in values
+                      if value['value']==i]
+        if self._get_type(var) == 'array':
+            self._meta['lib']['values'][var] = new_values
+        else:
+            self._meta['columns'][var]['values'] = new_values
+        return None
 
     def _get_missing_map(self, var):
         if self._is_array(var):
@@ -213,13 +225,24 @@ class DataSet(object):
         else:
             return self._meta['columns'][var]['text'][text_key]
 
+    def _get_meta_loc(self, var):
+        if self._get_type(var) == 'array':
+            return self._meta['lib']['values']
+        else:
+            return self._meta['columns']
+
+    def _get_value_loc(self, var):
+        if self._is_numeric(var):
+            raise KeyError('Numerical columns do not have "values" meta.')
+        loc = self._get_meta_loc(var)
+        if not self._is_array(var):
+            return emulate_meta(self._meta, loc[var].get('values', None))
+        else:
+            return emulate_meta(self._meta, loc[var])
+
     def _get_valuemap(self, var, text_key=None, non_mapped=None):
         if text_key is None: text_key = self._tk
-        if self._get_type(var) == 'array':
-            vals = self._meta['lib']['values'][var]
-        else:
-            vals = emulate_meta(self._meta,
-                                self._meta['columns'][var].get('values', None))
+        vals = self._get_value_loc(var)
         if non_mapped in ['codes', 'lists', None]:
             codes = [v['value'] for v in vals]
             if non_mapped == 'codes':
@@ -299,7 +322,7 @@ class DataSet(object):
     # ------------------------------------------------------------------------
     # DATA MANIPULATION/HANDLING
     # ------------------------------------------------------------------------
-    def make_dummy(self, var):
+    def make_dummy(self, var, partitioned=False):
         if not self._is_array(var):
             if self[var].dtype == 'object': # delimited set-type data
                 dummy_data = self[var].str.get_dummies(';')
@@ -308,7 +331,7 @@ class DataSet(object):
                     dummy_data.columns = [int(col) for col in dummy_data.columns]
                     dummy_data = dummy_data.reindex(columns=var_codes)
                     dummy_data.replace(np.NaN, 0, inplace=True)
-                if self.meta:
+                if not self.meta:
                     dummy_data.sort_index(axis=1, inplace=True)
             else: # single, int, float data
                 dummy_data = pd.get_dummies(self[var])
@@ -324,6 +347,12 @@ class DataSet(object):
                         for col in dummy_data.columns
                     },
                     inplace=True)
+            if not partitioned:
+                cols = ['{}_{}'.format(var, c) for c in var_codes]
+                dummy_data.columns = cols
+                return dummy_data
+            else:
+                return dummy_data.values, dummy_data.columns.tolist()
         else: # array-type data
             items = self._get_itemmap(var, non_mapped='items')
             codes = self._get_valuemap(var, non_mapped='codes')
@@ -338,9 +367,12 @@ class DataSet(object):
                     dummy_data.append(
                         pd.get_dummies(self[i]).reindex(columns=codes))
             dummy_data = pd.concat(dummy_data, axis=1)
-            cols = ['{}_{}'.format(i, c) for i in items for c in codes]
-            dummy_data.columns = cols
-        return dummy_data
+            if not partitioned:
+                cols = ['{}_{}'.format(i, c) for i in items for c in codes]
+                dummy_data.columns = cols
+                return dummy_data
+            else:
+                return dummy_data.values, codes, items
 
     def code_count(self, var, ignore=None, total=None):
         data = self.make_dummy(var)
