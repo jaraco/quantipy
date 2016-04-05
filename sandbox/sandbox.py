@@ -2671,15 +2671,15 @@ class OLS(StatAlgos):
         model_se = np.concatenate([[np.NaN], np.sqrt(rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
         c_se = np.diagonal(np.sqrt(np.linalg.inv(np.dot(x_.T,x_*w_))*(rss/(w_.sum()-len(x)-1))))[None].T
         anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r, model_se, fstat], axis=0).T).replace(np.NaN, '')
-        anova.index = ['TSS', 'ESS', 'RSS']
-        anova.columns = ['ANOVA (sum of squares)', 'dof', 'R', 'R^2', 'SE', 'F-stat']
+        anova.index = ['total', 'model', 'residual']
+        anova.columns = ['anova (sum of squares)', 'dof', 'R', 'R^2', 'se', 'F-stat']
 
         sigs = np.concatenate(get_pval(dofs[:, -1], solved/c_se), axis=1)
-        solved = np.concatenate([solved, c_se, std_coeff], axis=1)
-        solved = np.concatenate([solved, np.round(sigs, 5)], axis=1)
+        solved = np.concatenate([solved, np.round(sigs, 5), c_se, std_coeff], axis=1)
+        # solved = np.concatenate([solved, ], axis=1)
         pred = pd.DataFrame(solved).replace(np.NaN, '')
         pred.index = ['constant'] + x if intercept else x
-        pred.columns = ['B', 'SE', 'beta', 't-stat', 'p']
+        pred.columns = ['b', 'se', 't-stat', 'p', 'beta']
         y_mean = np.array(y_mean)
         y_mean = np.full((y_.shape[0], 1), y_mean)
 
