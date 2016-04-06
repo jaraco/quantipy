@@ -21,7 +21,10 @@ import itertools
 from collections import defaultdict, OrderedDict
 
 # Pickle modules
-import cPickle
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 
 # Compression methods
 import gzip

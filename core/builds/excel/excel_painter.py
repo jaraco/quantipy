@@ -23,7 +23,10 @@ from warnings import warn
 from PIL import Image
 import requests
 from io import BytesIO
-import cPickle
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 import itertools
 import re
 

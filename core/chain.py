@@ -1,4 +1,7 @@
-import cPickle
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 from collections import defaultdict
 from .helpers import functions as helpers
 from .view import View

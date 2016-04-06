@@ -3,7 +3,10 @@ from __future__ import print_function
 import pandas as pd
 import numpy as np
 import json
-import cPickle
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 import re
 import copy
 import itertools
@@ -11,8 +14,8 @@ import math
 import re, string
 
 from collections import OrderedDict, defaultdict
-from constants import DTYPE_MAP
-from constants import MAPPED_PATTERN
+from .constants import DTYPE_MAP
+from .constants import MAPPED_PATTERN
 from itertools import product
 import quantipy as qp
 

@@ -1,5 +1,8 @@
 
-import cPickle
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 from itertools import chain, combinations
 
 DESCRIPTIVES = [

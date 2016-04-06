@@ -1,5 +1,8 @@
-from chain import Chain
-import cPickle
+from .chain import Chain
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 from collections import OrderedDict
 import pandas as pd
 import copy
