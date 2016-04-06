@@ -53,7 +53,7 @@ def get_variable_types(data, meta):
         types[meta['masks'][mask]['type']].append(mask)
 
     if not_found:
-        print '%s not found in meta file. Ignored.' %(not_found)
+        print('%s not found in meta file. Ignored.' %(not_found))
 
     return types
 
@@ -307,7 +307,7 @@ def request_views(stack, data_key=None, filter_key=None, weight=None,
             # Main test views
             props_test_views = [
                 v for v in all_views
-                if 't.props.{}{}'.format(
+                if 't.props.{}{}|||'.format(
                     mimic,
                     level
                 ) in v

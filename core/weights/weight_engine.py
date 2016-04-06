@@ -19,7 +19,7 @@ class WeightEngine:
                 "\n You must pass a pandas.DataFrame to the 'data' argument of the WeightEngine"
                 "\n constructor. If your DataFrame is serialized please load it first."
                 )
-        
+
         self._df = data.copy()
 
         self.schemes = {}
@@ -151,7 +151,7 @@ class WeightEngine:
 
                     weights = the_scheme._compute()
                     self._df[the_scheme._weight_name()] = weights
-    
+
                 else:
                     raise Exception(("Scheme '%s' not found." % scheme))
         else:
@@ -186,6 +186,6 @@ class WeightEngine:
 
     def add_scheme(self, scheme, key, verbose=True):
         if scheme.name in self.schemes:
-            print "Overwriting existing scheme '%s'." % scheme.name
+            print("Overwriting existing scheme '%s'." % scheme.name)
         self.schemes[scheme.name] = {self._SCHEME: scheme, self._KEY: key}
         scheme._minimize_columns(self._df, key, verbose)

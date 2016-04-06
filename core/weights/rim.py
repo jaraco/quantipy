@@ -250,7 +250,7 @@ class Rim:
             for column, method in columns.iteritems():
                 if method == "mean":
                     m = np.round(self._df[column].mean(), 0)
-                    print m
+                    print(m)
                     self._df[column].fillna(m, inplace=True)
                 elif method == "mode":
                     self._df[column].fillna(self._df[column].mode()[0], inplace=True)
@@ -391,8 +391,8 @@ class Rim:
             nan_check = nan_check_df[target_vars].isnull().sum()
             if not nan_check.sum() == 0:
                 if verbose:
-                    print UserWarning(some_nans.format(
-                        self.name, group, nan_check))
+                    print(UserWarning(some_nans.format(
+                        self.name, group, nan_check)))
             for target in self.groups[group][self._TARGETS]:
                 target_col = target.keys()[0]
                 target_codes = target.values()[0].keys()
@@ -410,15 +410,15 @@ class Rim:
 
                 if miss_in_sample:
                     if verbose:
-                        print UserWarning(len_err_less.format(
+                        print(UserWarning(len_err_less.format(
                             self.name, group, target_col, len(target_codes),
-                            len(sample_codes), miss_in_sample))
+                            len(sample_codes), miss_in_sample)))
 
                 if miss_in_targets:
                     if verbose:
-                        print UserWarning(len_err_more.format(
+                        print(UserWarning(len_err_more.format(
                             self.name, group, target_col, len(target_codes),
-                            len(sample_codes), miss_in_targets))
+                            len(sample_codes), miss_in_targets)))
 
                 if not np.allclose(np.sum(target_props), 100.0):
                     raise ValueError(sum_err.format(self.name, group,
@@ -466,7 +466,7 @@ class Rake:
         self.report = {}
         self.iteration_counter = 0  # for the report
 
-        #do we print out extra information
+        #do we print(out extra information)
         self.verbose = verbose
 
         #Parse the dataframe
@@ -497,7 +497,7 @@ class Rake:
         if cap <= 1 and _use_cap:
             raise Exception("Cap may not be less than or equal to 1.")
         if cap < 1.5 and _use_cap:
-            print "Cap is very low, the model may take a long time to run."
+            print("Cap is very low, the model may take a long time to run.")
 
     def rakeonvar(self, target):
         target_col = target.keys()[0]
@@ -573,14 +573,14 @@ class Rake:
         self.dataframe[self.weight_column_name].replace(0.00, 1.00, inplace=True)
 
         if iteration == self.max_iterations:
-            print 'Convergence did not occur in %s iterations' % iteration
+            print('Convergence did not occur in %s iterations' % iteration)
         else:
             if diff_error > 0.001:
-                print "Raking achieved only partial convergence, please check the results to ensure that sufficient convergence was achieved."
-                print "No improvement was apparent after %s iterations" % iteration
+                print("Raking achieved only partial convergence, please check the results to ensure that sufficient convergence was achieved.")
+                print("No improvement was apparent after %s iterations" % iteration)
             else:
                 if self.verbose:
-                    print 'Raking converged in %s iterations' % iteration
-                    print 'Generating report'
+                    print('Raking converged in %s iterations' % iteration)
+                    print('Generating report')
         self.generate_report()
         return self.iteration_counter
