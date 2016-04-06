@@ -2794,7 +2794,7 @@ class Relations(Multivariate):
         else:
             return [(pairs[p[0], p[1]], pairs[p[0], p[1]]) for p in pair_list]
 
-    def action_matrix(self, perf_items, imp_items, method='simple'):
+    def action_matrix(self, perf_items, imp_items, w=None, method='simple'):
         """
         DESP
 
@@ -2806,7 +2806,13 @@ class Relations(Multivariate):
         Returns
         -------
         """
-        pass
+        if method == 'corr':
+            imps = self.corr(x=perf_items, y=imp_items, w=None)
+            print imps
+        elif method == 'reg':
+            raise NotImplementedError('NOT POSSIBLE RIGHT NOW!')
+        elif method == 'simple':
+            raise NotImplementedError('NOT POSSIBLE RIGHT NOW!')
 
     def cov(self, x, y, w=None, n=False, drop_listwise=False):
         self._select_variables(x, y, w, drop_listwise)
@@ -2844,7 +2850,9 @@ class Relations(Multivariate):
         stddev = [q.summarize('stddev', as_df=False).result[0, 0]
                   for q in self.crossed_quantities]
         stddev_paired = self._sort_as_paired_stats(stddev, pairs)
-        normalizer = [stddev1 * stddev2 for stddev1, stddev2 in stddev_paired]
+        print stddev_paired
+        if not len(self.x) == 1:
+            normalizer = [stddev1 * stddev2 for stddev1, stddev2 in stddev_paired]
         corr = cov / np.array(normalizer).reshape(cov.shape)
         return corr
         # --------------------------------------------------------------------
