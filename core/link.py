@@ -1,6 +1,6 @@
 #-*- coding: utf-8 -*-
 import numpy as np
-from view_generators.view_maps import QuantipyViews as View
+from .view_generators.view_maps import QuantipyViews as View
 
 
 class Link(dict):

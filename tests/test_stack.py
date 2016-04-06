@@ -3,7 +3,7 @@ import os.path
 import numpy
 import pandas as pd
 from pandas.util.testing import assert_frame_equal
-import test_helper
+from . import test_helper
 import copy
 
 from collections import defaultdict, OrderedDict
