@@ -22,6 +22,7 @@ from quantipy.core.tools.dp.prep import recode
 
 from operator import add, sub, mul, div
 from scipy.stats.stats import _ttest_finish as get_pval
+from scipy.stats import f as fdist
 from itertools import combinations, chain, product
 from collections import defaultdict, OrderedDict
 
@@ -2640,83 +2641,126 @@ class LinearModels(Multivariate):
         self.crossed_quantities = None
         self.analysis = 'LinearModels'
 
-    def set_model(self, y, x, w=None):
+    def set_model(self, y, x, w=None, intercept=True):
+        """
+        """
         self._select_variables(x=x, y=y, w=w, drop_listwise=True)
         self._get_quantities()
         self._matrix = self.ds[self.y + self.x + [self.w]].dropna().values
-        ymean = self.single_quantities[0].summarize('mean', as_df=False).result[0, 0]
-        self._ymean = ymean
+        ymean = self.single_quantities[-1].summarize('mean', as_df=False)
+        self._ymean = ymean.result[0, 0]
+        self._use_intercept = intercept
+        self.dofs = self._dofs()
+        predictors = ' + '.join(self.x)
+        if self._use_intercept: predictors = 'c + ' + predictors
+        self.formula = '{} ~ {}'.format(y, predictors)
         return None
 
-    def _get_vectors(self):
+    def _dofs(self):
+        """
+        """
+        correction = 1 if self._use_intercept else 0
+        obs = self._matrix[:, -1].sum()
+        tdof = obs - correction
+        mdof = len(self.x)
+        rdof = obs - mdof - correction
+        return [tdof, mdof, rdof]
+
+    def _vectors(self):
+        """
+        """
         w = self._matrix[:, [-1]]
         y = self._matrix[:, [0]]
         x = self._matrix[:, 1:-1]
         x = np.concatenate([np.ones((x.shape[0], 1)), x], axis=1)
         return w, y, x
 
-    def get_betas(self):
+    def get_coefs(self, standardize=False):
+        coefs = self._coefs() if not standardize else self._betas()
+        coef_df = pd.DataFrame(coefs,
+                               index = ['-c-'] + self.x
+                               if self._use_intercept else self.x,
+                               columns = ['b']
+                               if not standardize else ['beta'])
+        coef_df.replace(np.NaN, '', inplace=True)
+        return coef_df
+
+    def _betas(self):
+        """
+        """
         corr_mat = Relations(self.ds).corr(self.x+self.y, '@', self.w, True)
         corr_mat = corr_mat.values
         predictors = corr_mat[:-1, :-1]
         y = corr_mat[:-1, [-1]]
         inv_predictors = np.linalg.inv(predictors)
-        betas = np.dot(inv_predictors, y)
-        return betas[:, 0]
+        betas = inv_predictors.dot(y)
+        if self._use_intercept:
+            betas = np.vstack([[np.NaN], betas])
+        return betas
 
-    def get_coefs(self, intercept=True):
-        w, y, x = self._get_vectors()
+    def _coefs(self):
+        """
+        """
+        w, y, x = self._vectors()
         coefs = np.dot(np.linalg.inv(np.dot(x.T, x*w)), np.dot(x.T, y*w))
         return coefs
 
-    def get_squares(self):
-        w, y, x = self._get_vectors()
+    def get_modelfit(self, r_sq=True):
+        anova, fit_stats = self._sum_of_squares()
+        dofs = np.round(np.array(self.dofs)[:, None], 0)
+        anova_stats = np.hstack([anova, dofs, fit_stats])
+        anova_df = pd.DataFrame(anova_stats,
+                                index=['total', 'model', 'residual'],
+                                columns=['sum of squares', 'dof', 'R', 'R^2'])
+        anova_df.replace(np.NaN, '', inplace=True)
+        return anova_df
+
+    def _sum_of_squares(self):
+        """
+        """
+        w, y, x = self._vectors()
         hat = (x*w).dot(np.dot(np.linalg.inv(np.dot(x.T, x*w)), x.T))
         tss  = (w*(y - self._ymean)**2).sum()[None]
         rss = y.T.dot(np.dot(np.eye(hat.shape[0])-hat, y*w))[0]
         ess = tss-rss
-        return np.concatenate([tss, ess, rss], axis=1)[None]
+        all_ss = np.vstack([tss, ess, rss])
+        rsq = np.vstack([[np.NaN], ess/tss, [np.NaN]])
+        r = np.sqrt(rsq)
+        all_rs = np.hstack([r, rsq])
+        return all_ss, all_rs
 
-    def fit(self, intercept=True, estimator='ols'):
-        # get standardized coefficients (betas)
-        betas = self.get_betas()[None].T
-        betas = np.concatenate([np.full((1, 1), np.nan), betas], axis=0)
-        # get regular coefficients
-        coefs = self.get_coefs(intercept=intercept)
-        # get sum of squares
-        anova = self.get_squares()
-        print betas
-        print coefs
-        print anova
+    def estimate(self, estimator='ols', diags=True):
+        """
+        """
+        # Wrap up the modularized computation methods
+        coefs, betas = self.get_coefs(), self.get_coefs(True)
+        modelfit = self.get_modelfit()
+        # Compute diagnostics, i.e. standard errors and sig. of estimates/fit
+        # prerequisites
+        w, _, x = self._vectors()
+        rss = modelfit.loc['residual', 'sum of squares']
+        ess = modelfit.loc['model', 'sum of squares']
+        # coefficients: std. errors, t-stats, sigs
+        c_se = np.diagonal(np.sqrt(np.linalg.inv(np.dot(x.T,x*w)) *
+                                   (rss/self.dofs[-1])))[None].T
+        c_sigs = np.hstack(get_pval(self.dofs[-1], coefs/c_se))
+        c_diags = np.round(np.hstack([c_se, c_sigs]), 6)
+        c_diags_df = pd.DataFrame(c_diags, index=coefs.index,
+                                  columns=['se', 't-stat', 'p'])
+        # modelfit: se, Fstat, ...
+        m_se = np.vstack([[np.NaN], np.sqrt(rss/self.dofs[-1]), [np.NaN]])
+        m_fstat = np.vstack([[np.NaN],
+                             (ess/self.dofs[1]) / (rss/self.dofs[-1]),
+                             [np.NaN]])
+        m_sigs = 1-fdist.cdf(m_fstat, self.dofs[1], self.dofs[-1])
+        m_diags = np.round(np.hstack([m_se, m_fstat, m_sigs]), 6)
+        m_diags_df = pd.DataFrame(m_diags, index=modelfit.index,
+                                  columns=['se', 'F-stat', 'p'])
+        # Put everything together
+        parameter_results = pd.concat([coefs, betas, c_diags_df], axis=1)
+        fit_summary = pd.concat([modelfit, m_diags_df], axis=1).replace(np.NaN, '')
 
-
-
-        # self._select_variables(x=y, y=x, w=w, drop_listwise=True)
-        # self._get_quantities()
-
-
-
-        # anova = np.concatenate([tss, ess, rss], axis=1)[None]
-        # dofs = np.array([np.round(w_.sum()-1, 0), len(x), np.round(w_.sum()-len(x)-1, 0)])[None]
-        # r_sq = np.concatenate([[np.NaN], ess/tss, [np.NaN]], axis=0)[None]
-        # r = np.sqrt(r_sq)
-        # fstat =  np.concatenate([[np.NaN], (ess/3) / (rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
-        # model_se = np.concatenate([[np.NaN], np.sqrt(rss/(w_.sum()-len(x)-1)), [np.NaN]], axis=0)[None]
-        # c_se = np.diagonal(np.sqrt(np.linalg.inv(np.dot(x_.T,x_*w_))*(rss/(w_.sum()-len(x)-1))))[None].T
-        # anova = pd.DataFrame(np.concatenate([anova, dofs, r_sq, r, model_se, fstat], axis=0).T).replace(np.NaN, '')
-        # anova.index = ['total', 'model', 'residual']
-        # anova.columns = ['anova (sum of squares)', 'dof', 'R', 'R^2', 'se', 'F-stat']
-
-        # sigs = np.concatenate(get_pval(dofs[:, -1], solved/c_se), axis=1)
-        # solved = np.concatenate([solved, np.round(sigs, 5), c_se, std_coeff], axis=1)
-        # # solved = np.concatenate([solved, ], axis=1)
-        # pred = pd.DataFrame(solved).replace(np.NaN, '')
-        # pred.index = ['constant'] + x if intercept else x
-        # pred.columns = ['b', 'se', 't-stat', 'p', 'beta']
-        # y_mean = np.array(y_mean)
-        # y_mean = np.full((y_.shape[0], 1), y_mean)
-
-        # return pred, anova
+        return parameter_results, fit_summary
 
 class Relations(Multivariate):
     """
