@@ -1,5 +1,5 @@
  #-*- coding: utf-8 -*-
-from view_mapper import ViewMapper
+from .view_mapper import ViewMapper
 from quantipy.core.view import View
 
 import pandas as pd

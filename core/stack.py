@@ -6,16 +6,16 @@ import pandas as pd
 import numpy as np
 import copy
 
-from link import Link
-from chain import Chain
-from view import View
-from helpers import functions
-from view_generators.view_mapper import ViewMapper
-from view_generators.view_maps import QuantipyViews
+from .link import Link
+from .chain import Chain
+from .view import View
+from .helpers import functions
+from .view_generators.view_mapper import ViewMapper
+from .view_generators.view_maps import QuantipyViews
 from quantipy.core.tools.dp.spss.reader import parse_sav_file
 from quantipy.core.tools.dp.io import unicoder, write_quantipy
 from quantipy.core.tools.dp.prep import frequency, verify_test_results
-from cache import Cache
+from .cache import Cache
 
 import itertools
 from collections import defaultdict, OrderedDict

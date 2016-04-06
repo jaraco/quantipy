@@ -2,7 +2,7 @@ import io
 import sys
 import numpy as np
 import pandas as pd
-from rim import Rim
+from .rim import Rim
 from collections import OrderedDict
 
 
