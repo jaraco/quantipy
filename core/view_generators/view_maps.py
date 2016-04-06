@@ -8,7 +8,7 @@ import copy
 import traceback
 from collections import defaultdict
 from itertools import combinations
-from operator import add, sub, mul, div
+from operator import add, sub, mul, floordiv as div
 
 from quantipy.core.helpers import functions as helpers
 import quantipy.core.tools as tools

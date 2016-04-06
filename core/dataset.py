@@ -16,7 +16,7 @@ from quantipy.core.tools.view.logic import (
     is_lt, is_ne, is_gt,
     is_le, is_eq, is_ge,
     union, intersection, get_logic_index)
-from cache import Cache
+from .cache import Cache
 
 class DataSet(object):
     """

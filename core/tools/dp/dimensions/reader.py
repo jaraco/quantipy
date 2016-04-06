@@ -4,10 +4,12 @@ Created on 20 Nov 2014
 @author: JamesG
 """
 
+from __future__ import absolute_import
+
 import numpy as np
 import pandas as pd
 import quantipy as qp
-from StringIO import StringIO
+import io
 from lxml import etree
 import sqlite3
 import re
@@ -481,7 +483,7 @@ def get_mdd_xml(path_mdd):
     with open(path_mdd, 'r+') as f:
         xml_text = f.read()
     recovering_parser = etree.XMLParser(recover=True)
-    xml = etree.parse(StringIO(xml_text), parser=recovering_parser)
+    xml = etree.parse(io.BytesIO(xml_text), parser=recovering_parser)
 
     return xml
 

@@ -1,5 +1,8 @@
 
-import cPickle
+try:
+    import cPickle
+except ImportError:
+    import pickle as cPickle
 
 class XLSX_Formats(object):
     """

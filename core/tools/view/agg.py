@@ -12,7 +12,7 @@ from quantipy.core.helpers.constants import DTYPE_MAP
 from quantipy.core.helpers.constants import MAPPED_PATTERN
 from itertools import product, combinations
 from scipy.stats.stats import _ttest_finish as get_pval
-from operator import add, sub, mul, div
+from operator import add, sub, mul, floordiv as div
 
 from quantipy.core.view import View
 from quantipy.core.view_generators.view_mapper import ViewMapper

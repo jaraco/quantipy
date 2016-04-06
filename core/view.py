@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import quantipy.core.helpers.functions as helpers
-from operator import add, sub, mul, div
+from operator import add, sub, mul, floordiv as div
 import pandas as pd
 import copy
 pd.set_option('display.encoding', 'utf-8')
