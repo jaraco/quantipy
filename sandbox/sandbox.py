@@ -2747,7 +2747,7 @@ class LinearModels(Multivariate):
         c_diags = np.round(np.hstack([c_se, c_sigs]), 6)
         c_diags_df = pd.DataFrame(c_diags, index=coefs.index,
                                   columns=['se', 't-stat', 'p'])
-        # modelfit: se, Fstat, ...
+        # modelfit: se, F-stat, ...
         m_se = np.vstack([[np.NaN], np.sqrt(rss/self.dofs[-1]), [np.NaN]])
         m_fstat = np.vstack([[np.NaN],
                              (ess/self.dofs[1]) / (rss/self.dofs[-1]),
@@ -2793,6 +2793,20 @@ class Relations(Multivariate):
             return [(pairs[p[0], p[1]], pairs[p[1], p[0]]) for p in pair_list]
         else:
             return [(pairs[p[0], p[1]], pairs[p[0], p[1]]) for p in pair_list]
+
+    def action_matrix(self, perf_items, imp_items, method='simple'):
+        """
+        DESP
+
+        Parameters
+        ----------
+        ...
+        method : {'simple', 'corr', 'reg'} default 'simple'
+
+        Returns
+        -------
+        """
+        pass
 
     def cov(self, x, y, w=None, n=False, drop_listwise=False):
         self._select_variables(x, y, w, drop_listwise)
