@@ -676,7 +676,7 @@ class View(object):
         return mdict
 
     def __repr__(self):
-        """ Message to be printed in stdout (print self)
+        """ Message to be printed in stdout (print(self))
 
             Example: << View.View Rows: 4, Columns: 3, Has Meta:False >>
         """

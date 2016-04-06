@@ -2446,7 +2446,7 @@ class Reductions(Multivariate):
                         edgecolor='k', marker='^', c='lightgrey', s=20)
 
         fig = x.get_figure()
-        # print fig.get_axes()[0].grid()
+        # print(fig.get_axes()[0].grid())
         fig.get_axes()[0].tick_params(labelsize=6)
         fig.get_axes()[0].patch.set_facecolor('w')
 
@@ -3557,7 +3557,7 @@ class Stack(defaultdict):
                             elif isinstance(views, (list, tuple)):
                                 views = QuantipyViews(views=views)
                             else:
-                                print 'ERROR - VIEWS CRASHED!'
+                                print('ERROR - VIEWS CRASHED!')
                         views._apply_to(l, weights)
                         l._clear()
 

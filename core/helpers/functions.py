@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import pandas as pd
 import numpy as np
 import json
@@ -87,7 +89,7 @@ def verify_dtypes_vs_meta(data, meta):
 
     missing = df.loc[df['dtype'].isin([np.NaN])]['meta']
     if missing.size>0:
-        print '\nSome meta not paired to data columns was found (these may be special data types):\n', missing, '\n'
+        print('\nSome meta not paired to data columns was found (these may be special data types):\n', missing, '\n')
 
     df = df.dropna(how='any')
     df['verified'] = df.apply(lambda x: x['dtype'] in DTYPE_MAP[x['meta']], axis=1)
@@ -1593,7 +1595,7 @@ def hide_codes_x(x, codes_to_hide, views, exclude_from_base=False):
                                              'x_hidden_in_views': views,
                                              'x_exclude_from_base': exclude_from_base})
             else:
-                print 'hide_codes_x(): %s not found --> ignored.' % (view)
+                print('hide_codes_x(): %s not found --> ignored.' % (view))
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def reorder_codes_x(x, new_order, views):

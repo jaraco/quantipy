@@ -152,7 +152,7 @@ class Stack(defaultdict):
 
         if data_key in self.keys():
             warning_msg = "You have overwritten data/meta for key: ['%s']."
-            print warning_msg % (data_key)
+            print(warning_msg % (data_key))
 
         if data is not None:
             if isinstance(data, pd.DataFrame):
@@ -251,7 +251,7 @@ class Stack(defaultdict):
             for mask in self[data_key].meta['masks'].keys():
                 types[self[data_key].meta['masks'][mask]['type']].append(mask)
             if not_found:
-                print '%s not found in meta file. Ignored.' %(not_found)
+                print('%s not found in meta file. Ignored.' %(not_found))
             if only_type:
                 return types[only_type]
             else:
@@ -656,7 +656,7 @@ class Stack(defaultdict):
                     try:
                         self[dk][filter_def].data = self[dk].data.query(filter_def)
                         self[dk][filter_def].meta = self[dk].meta
-                    except Exception, ex:
+                    except Exception as ex:
                         raise UserWarning('A filter definition is invalid and will be skipped: {filter_def}'.format(filter_def=filter_def))
                         continue
                 fdata = self[dk][filter_def].data
@@ -788,7 +788,7 @@ class Stack(defaultdict):
                     skipped_views.append(view)
                     warning_msg = ('\nOnly preset QuantipyViews are supported.'
                                    'Skipping: {}').format(view)
-                    print warning_msg
+                    print(warning_msg)
             else:
                 view_weight = view.split('|')[-2]
                 if not x in [view_weight, new_weight]:
@@ -818,8 +818,8 @@ class Stack(defaultdict):
                         try:
                             self.add_link(data_keys=dk, filters=f, x=x, y=y,
                                           weights=weight, views=[shortname])
-                        except ValueError, e:
-                            print '\n', e
+                        except ValueError as e:
+                            print('\n', e)
         return None
 
     def save(self, path_stack, compression="gzip", store_cache=True,
@@ -1410,12 +1410,12 @@ class Stack(defaultdict):
                         dk=dk, fk=fk, xk=xk, yk=yk)
                     raise ValueError
         except ValueError:
-            print error_msg.format(
+            print(error_msg.format(
                 key_type=key_type,
                 key=key,
                 stack_path=stack_path,
                 keys_found=keys_found
-            )
+            ))
 
     def _force_key_as_list(self, key):
         """Returns key as [key] if it is str or unicode"""

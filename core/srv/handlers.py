@@ -22,10 +22,10 @@ class WebEditHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
                      'CONTENT_TYPE':self.headers['Content-Type'],
                      })
         for item in form.list:
-            print item.name
+            print(item.name)
             if item.name == "obj_json":
                 save_string_in_tmp_folder(
-                    data=item.value, 
+                    data=item.value,
                     filename="obj.json")
                 break
 

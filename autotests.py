@@ -24,8 +24,8 @@ from watchdog.events import FileSystemEventHandler
 
 class TestHandler(FileSystemEventHandler):
     def on_modified(self, event):
-        print "Changes detected..."
-        print "Running tests..."
+        print("Changes detected...")
+        print("Running tests...")
         os.system('python -m unittest discover')
 #        os.system('coverage run -m unittest discover')
 
