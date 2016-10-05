@@ -18,6 +18,7 @@ class View(object):
         self.cbases = None
         self.grp_text_map = None
         self._custom_txt = ''
+        self.add_base_text = True
 
     def meta(self):
         """
@@ -44,6 +45,8 @@ class View(object):
                     'y': self._y,
                     'shape': self.dataframe.shape
                     }
+        if self.is_base():
+            viewmeta['agg']['add_base_text'] = self.add_base_text
         return viewmeta
 
     def _link_meta(self, link):
@@ -104,14 +107,16 @@ class View(object):
         return grp_text_map
 
     def describe_block(self):
-
         df = self.dataframe
         logic = self._kwargs['logic']
+        global_expand = self._kwargs.get('expand', None)
         block_ref = {}
         if not logic is None:
             for item in logic:
                 if isinstance(item, dict):
                     expand = item.get('expand', None)
+                    if expand is None:
+                        expand = global_expand
                     if expand is None:
                         block_ref[item.keys()[0]] = 'normal'
                     elif expand in ['before', 'after']:
@@ -309,7 +314,11 @@ class View(object):
             else:
                 condition = 'x' if self._kwargs.get('axis', 'x') == 'x' else 'y'
         except:
-            condition = 'x' if self._kwargs.get('axis', 'x') == 'x' else 'y'
+            if self.missing():
+                code_excl = '{' + ','.join([str(m) for m in self.missing()]) + '}'
+                condition = 'x~{}'.format(code_excl)
+            else:
+                condition = 'x' if self._kwargs.get('axis', 'x') == 'x' else 'y'
         return condition
 
     def _calc_condition(self, logic, conditions, calc):
@@ -489,7 +498,7 @@ class View(object):
         if self._is_test():
             teststr = self._notation.split('|')[1].split('.')
             if teststr[1] == 'means':
-                return float(teststr[3])/100
+                return float(teststr[3].split('+')[0])/100
             else:
                 return False
         else:
@@ -502,7 +511,7 @@ class View(object):
         if self._is_test():
             teststr = self._notation.split('|')[1].split('.')
             if teststr[1] == 'props':
-                return float(teststr[3])/100
+                return float(teststr[3].split('+')[0])/100
             else:
                 return False
         else:

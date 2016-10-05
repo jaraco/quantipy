@@ -1,4 +1,4 @@
- #-*- coding: utf-8 -*-
+#-*- coding: utf-8 -*-
 from view_mapper import ViewMapper
 from quantipy.core.view import View
 
@@ -25,13 +25,6 @@ class QuantipyViews(ViewMapper):
     aggregations. Their behaviour is controlled via ``kwargs``.
     """
     def __init_known_methods__(self):
-        self.basic_notations = {'counts': 'x|f|:||{}|counts',
-                                'c%': 'x|f|:|y|{}|c%',
-                                'cbase': 'x|f|x:||{}|cbase',
-                                'counts_sum': 'x|f.c:f|x:||{}|counts_sum',
-                                'c%_sum': 'x|f.c:f|x:|y|{}|c%_sum',
-                                'cbase_gross': 'x|f|x:||{}|cbase_gross'}
-
         super(QuantipyViews, self).__init_known_methods__()
         self.known_methods['default']= {
             'method': 'default',
@@ -93,6 +86,14 @@ class QuantipyViews(ViewMapper):
                 'rel_to': 'x'
             }
         }
+        self.known_methods['res_c%'] = {
+            'method': 'frequency',
+            'kwargs': {
+                'text': '',
+                'axis': None,
+                'rel_to': 'counts_sum'
+            }
+        }
         self.known_methods['counts_sum'] = {
             'method': 'frequency',
             'kwargs': {
@@ -117,9 +118,29 @@ class QuantipyViews(ViewMapper):
                 'text': ''
             }
         }
-        self.known_methods['fast_path'] =  {
-            'method': 'frequency',
-            'kwargs': {'fast_path': True, 'views': None}
+        self.known_methods['stddev'] = {
+            'method': 'descriptives',
+            'kwargs': {
+                'stats': 'stddev',
+                'axis': 'x',
+                'text': ''
+            }
+        }
+        self.known_methods['min'] = {
+            'method': 'descriptives',
+            'kwargs': {
+                'stats': 'min',
+                'axis': 'x',
+                'text': ''
+            }
+        }
+        self.known_methods['max'] = {
+            'method': 'descriptives',
+            'kwargs': {
+                'stats': 'max',
+                'axis': 'x',
+                'text': ''
+            }
         }
 
     def default(self, link, name, kwargs):
@@ -151,7 +172,7 @@ class QuantipyViews(ViewMapper):
         string = ['string']
         categorizable = categorical + numeric
         x_type, y_type, transpose = self._get_method_types(link)
-        q = qp.Quantity(link, weight=weights, use_meta=True)
+        q = qp.Quantity(link, weight=weights)
         if q.type == 'array' and not q.y == '@':
             pass
         else:
@@ -180,7 +201,6 @@ class QuantipyViews(ViewMapper):
             view.dataframe = view_df
             view._notation = notation
             link[notation] = view
-
 
     def frequency(self, link, name, kwargs):
         """
@@ -233,71 +253,61 @@ class QuantipyViews(ViewMapper):
                   cases and not the raw sum of the frequencies
                   per category, i.e. no multiple counting of cases.
         """
-        if kwargs.get('fast_path', False):
-            weights = kwargs.get('weights', None)
-            w = weights if weights is not None else None
-            q = qp.Quantity(link, w, use_meta=True)
-            basics, notations = self._basic_viewobj(link, kwargs)
-            results, cbase, rbase = self._compute_basic(q, kwargs)
-            for basic, notation, result in zip(basics, notations, results):
-                basic.cbases, basic.rbases = cbase, rbase
-                basic._notation = notation.format(w if w is not None else '')
-                if q.type == 'array':
-                    basic.dataframe = result.T if link.y == '@' else result
-                else:
-                    basic.dataframe = result
-                link[notation.format(w if w is not None else '')] = basic
+        view = View(link, name, kwargs=kwargs)
+        axis, condition, rel_to, weights, text = view.get_std_params()
+        logic, expand, complete, calc, exclude, rescale = view.get_edit_params()
+        # ====================================================================
+        # this block of kwargs should be removed
+        # parameter overwriting should be done using the template
+        # NOT QP core code!
+        if kwargs.get('combine', False):
+            view._kwargs['expand'], expand = None, None
+            view._kwargs['complete'], complete = False, False
+            if logic is not None:
+                for no, logic_def in enumerate(logic):
+                    if 'expand' in logic_def.keys():
+                        logic_def['expand'] = None
+                        logic[no] = logic_def
+                view._kwargs['logic'] = logic
+        # ====================================================================
+        w = weights if weights is not None else None
+        ignore = True if name == 'cbase_gross' else False
+        q = qp.Quantity(link, w, ignore_flags=ignore)
+        if q.type == 'array' and not q.y == '@':
+            pass
         else:
-            view = View(link, name, kwargs=kwargs)
-            axis, condition, rel_to, weights, text = view.get_std_params()
-            logic, expand, complete, calc, exclude, rescale = view.get_edit_params()
-            # ====================================================================
-            # this block of kwargs should be removed
-            # parameter overwriting should be done using the template
-            # NOT QP core code!
-            if kwargs.get('combine', False):
-                view._kwargs['expand'], expand = None, None
-                view._kwargs['complete'], complete = False, False
-                if logic is not None:
-                    for no, logic_def in enumerate(logic):
-                        if 'expand' in logic_def.keys():
-                            logic_def['expand'] = None
-                            logic[no] = logic_def
-                    view._kwargs['logic'] = logic
-            # ====================================================================
-            w = weights if weights is not None else None
-            q = qp.Quantity(link, w, use_meta=True)
-            if q.type == 'array' and not q.y == '@':
-                pass
-            else:
-                if logic is not None:
+            if logic is not None:
+                try:
                     q.group(groups=logic, axis=axis, expand=expand, complete=complete)
-                    q.count(axis=None, as_df=False, margin=False)
-                    condition = view.spec_condition(link, q.logical_conditions, expand)
-                else:
-                    raw = True if name in ['counts_sum', 'c%_sum'] else False
-                    q.count(axis=axis, raw_sum=raw, as_df=False, margin=False)
-                if rel_to is not None:
-                    if q.type == 'array':
-                        rel_to = 'y'
-                    q.normalize(rel_to)
-                q.to_df()
-                view.cbases = q.cbase
-                view.rbases = q.rbase
-                if calc is not None:
-                    calc_only = kwargs.get('calc_only', False)
-                    q.calc(calc, axis, result_only=calc_only)
-                if calc is not None or name in ['counts_sum', 'c%_sum']:
-                    method_nota = 'f.c:f'
-                else:
-                    method_nota = 'f'
-                notation = view.notation(method_nota, condition)
-                view._notation = notation
+                except NotImplementedError:
+                    return
+                q.count(axis=None, as_df=False, margin=False)
+                condition = view.spec_condition(link, q.logical_conditions, expand)
+            else:
+                raw = True if name in ['counts_sum', 'c%_sum'] else False
+                q.count(axis=axis, raw_sum=raw, as_df=False, margin=False)
+            if rel_to is not None:
                 if q.type == 'array':
-                    view.dataframe = q.result.T if link.y == '@' else q.result
-                else:
-                    view.dataframe = q.result
-                link[notation] = view
+                    rel_to = 'y'
+                q.normalize(rel_to)
+            q.to_df()
+            view.cbases = q.cbase
+            view.rbases = q.rbase
+            if calc is not None:
+                calc_only = kwargs.get('calc_only', False)
+                q.calc(calc, axis, result_only=calc_only)
+            if calc is not None or name in ['counts_sum', 'c%_sum']:
+                method_nota = 'f.c:f'
+            else:
+                method_nota = 'f'
+            notation = view.notation(method_nota, condition)
+            view._notation = notation
+            if q.type == 'array':
+                view.dataframe = q.result.T if link.y == '@' else q.result
+            else:
+                view.dataframe = q.result
+            view._kwargs['exclude'] = q.miss_x
+            link[notation] = view
 
     def descriptives(self, link, name, kwargs):
         """
@@ -350,7 +360,7 @@ class QuantipyViews(ViewMapper):
             stat = kwargs.get('stats', 'mean')
             view._kwargs['calc_only'] = True
             w = weights if weights is not None else None
-            q = qp.Quantity(link, w, use_meta=True)
+            q = qp.Quantity(link, w)
             if q.type == 'array' and not q.y == '@':
                 pass
             else:
@@ -377,6 +387,7 @@ class QuantipyViews(ViewMapper):
                     view.dataframe = q.result
                 view._notation = notation
                 view.translate_metric(set_value='meta')
+                view._kwargs['exclude'] = q.miss_x
                 link[notation] = view
 
     def coltests(self, link, name, kwargs):
@@ -466,43 +477,6 @@ class QuantipyViews(ViewMapper):
                 link[notation] = view
             except:
                 pass
-
-    def pipe(self, views):
-        view_order = ['counts', 'c%', 'cbase', 'cbase_gross', 'counts_sum',
-                      'c%_sum']
-        views = [view for view in view_order if view in views]
-        blank_kwargs = qp.QuantipyViews(['fast_path'])['fast_path']['kwargs']
-        self['fast_path']['kwargs'] = blank_kwargs
-        self['fast_path']['kwargs']['views'] = views
-        return self
-
-    def _basic_viewobj(self, link, kwargs):
-        names = kwargs['views']
-        notations = [self.basic_notations[name] for name in names]
-        basics = [View(link, name, self.known_methods[name]['kwargs'])
-                  for name in names]
-        return basics, notations
-
-    @staticmethod
-    def _compute_basic(q, kwargs):
-        names = kwargs['views']
-        res = []
-        if 'counts' in names:
-            res.append(q.count(None, False, False, True).result)
-            if 'c%' in names: res.append(q.normalize().result)
-        elif not 'counts' in names and 'c%' in names:
-            res.append(q.count(None, False, False, True).normalize().result)
-        if 'cbase' in names:
-            res.append(q.count('x', False, False, True).result)
-            if 'cbase_gross' in names: res.append(q.result)
-        elif 'cbase' not in names and 'cbase_gross' in names:
-            res.append(q.count('x', False, False, True).result)
-        if 'counts_sum' in names:
-            res.append(q.count('x', True, False, True).result)
-            if 'c%_sum' in names: res.append(q.normalize().result)
-        elif 'counts_sum' not in names and 'c%_sum' in names:
-            res.append(q.count('x', True, False, True).normalize().result)
-        return res, q.cbase, q.rbase
 
     @staticmethod
     def _get_view_names(cache, stack, weights, get='count'):

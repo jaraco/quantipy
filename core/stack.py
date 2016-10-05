@@ -447,6 +447,7 @@ class Stack(defaultdict):
                                     chain_view.grp_text_map = stack_view.grp_text_map
                                     chain_view.dataframe = view_df
                                     chain_view._custom_txt = stack_view._custom_txt
+                                    chain_view.add_base_text = stack_view.add_base_text
                                     chain_link[vk] = chain_view
                                     if vk not in found_views:
                                         found_views.append(vk)
@@ -799,7 +800,10 @@ class Stack(defaultdict):
                             else:
                                 weight = [view_weight, new_weight]
                         else:
-                            weight = None
+                            if new_weight == '':
+                                weight = None
+                            else:
+                                weight = [None, new_weight]
                         self.add_link(data_keys=dk, filters=f, x=x, y=y,
                                       weights=weight, views=[shortname])
                     else:

@@ -158,7 +158,6 @@ def paint_index(meta,
     levels = get_index_levels(index)
     col = levels[0]
     values = list(levels[1])
-
     if not col in meta['columns']:
         return index
     else:
@@ -323,21 +322,23 @@ def paint_add_text_map(meta, add_text_map, text_key):
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def paint_col_values_text(meta, col, values, text_key, add_text_map=None):
-
     add_text_map = paint_add_text_map(meta, add_text_map, text_key)
-
+    num_col = meta['columns'][col]['type'] in ['int', 'float']
     try:
         has_all = 'All' in values
         if has_all: values.remove('All')
-        try:
-            values_map = {
-                val['value']: get_text(val['text'], text_key)
-                for val in meta['columns'][col]['values']}
-        except UnicodeEncodeError:
-            values_map = {
-                val['value']: qp.core.tools.dp.io.unicoder(
-                    get_text(val['text'], text_key, like_ascii=True))
-                for val in meta['columns'][col]['values']}
+        if not num_col:
+            try:
+                values_map = {
+                    val['value']: get_text(val['text'], text_key)
+                    for val in meta['columns'][col]['values']}
+            except UnicodeEncodeError:
+                values_map = {
+                    val['value']: qp.core.tools.dp.io.unicoder(
+                        get_text(val['text'], text_key, like_ascii=True))
+                    for val in meta['columns'][col]['values']}
+        else:
+            values_map = {}
         values_map.update(add_text_map)
         values_text = [values_map[v] for v in values]
     except KeyError:
@@ -2435,7 +2436,7 @@ def get_variable_types(data, meta):
 
     return types
 
-def make_delimited_from_dichotmous(df):
+def make_delimited_from_dichotmous(df, use_col_values=False):
     """ Returns a delimited set from the incoming dichotomous
     set dataframe.
     """
@@ -2447,8 +2448,12 @@ def make_delimited_from_dichotmous(df):
             delimited = np.NaN
         return delimited
 
-    for i, col in enumerate(df.columns, start=1):
-        df[col] = df[col].replace(1, i)
+    if use_col_values:
+        for i, col in enumerate(df.columns, start=1):
+            df[col] = df[col].replace(1, col)
+    else:
+        for i, col in enumerate(df.columns, start=1):
+            df[col] = df[col].replace(1, i)
 
     delimited_series = df.replace(0, np.NaN).apply(
         make_delimited_from_series,
