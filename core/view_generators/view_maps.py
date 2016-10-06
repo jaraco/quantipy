@@ -476,7 +476,7 @@ class QuantipyViews(ViewMapper):
                 view._notation = notation
                 link[notation] = view
             except:
-                pass
+                raise
 
     @staticmethod
     def _get_view_names(cache, stack, weights, get='count'):
